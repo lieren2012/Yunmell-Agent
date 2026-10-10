@@ -65,6 +65,8 @@ def test_enterprise_repo_organizes_teams_and_members(db: SqlitePool) -> None:
     assert controls.browser_enabled is True
     assert controls.network_enabled is False
     assert repo.get_control_policy(team.team_id) == controls
+    assert repo.control_allowed_for_user(1, "browser") is True
+    assert repo.control_allowed_for_user(1, "shell") is False
 
     class Services:
         enterprise_repo = repo

@@ -1,3 +1,4 @@
+# Local control gate wraps require_permission("browser").
 """Browser environment uninstallation (SSE)."""
 
 from __future__ import annotations
@@ -7,7 +8,7 @@ from collections.abc import AsyncGenerator
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from octop.api.deps import require_permission
+from octop.api.deps import require_local_control
 from octop.infra.browser.setup import uninstall_browser_stream
 from octop.infra.users.identity import User
 from octop.infra.utils.locale import resolve_request_locale
@@ -18,7 +19,7 @@ router = APIRouter()
 @router.post("/browser/uninstall")
 async def uninstall_browser(
     request: Request,
-    _user: User = Depends(require_permission("browser")),
+    _user: User = Depends(require_local_control("browser", "browser")),
 ) -> StreamingResponse:
     """Stream browser uninstall progress as SSE (admin only)."""
     locale = resolve_request_locale(request)

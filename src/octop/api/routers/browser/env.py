@@ -1,3 +1,4 @@
+# Local control gate wraps require_permission("browser").
 """Browser environment probe and Chromium install (SSE).
 
 Live sessions are octop-browser (see ``harness.py`` / ``stream.py``), not
@@ -16,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from octop.api.deps import current_user, require_permission
+from octop.api.deps import require_local_control
 
 router = APIRouter()
 
@@ -89,7 +90,9 @@ def _probe_env() -> dict[str, Any]:
 
 
 @router.get("/browser/env-status")
-async def env_status(_: Any = Depends(current_user)) -> dict[str, Any]:
+async def env_status(
+    _: Any = Depends(require_local_control("browser", "browser")),
+) -> dict[str, Any]:
     return _probe_env()
 
 
@@ -118,7 +121,9 @@ def _verify_browser_binary(exe: str) -> tuple[bool, str]:
 
 
 @router.post("/browser/install")
-async def install(_: Any = Depends(require_permission("browser"))) -> StreamingResponse:
+async def install(
+    _: Any = Depends(require_local_control("browser", "browser")),
+) -> StreamingResponse:
     """Stream Chromium install progress as SSE.
 
     Each event is a JSON line conforming to ``octop_browser.InstallEvent``:

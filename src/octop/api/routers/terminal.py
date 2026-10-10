@@ -1,3 +1,4 @@
+# Local control gate wraps require_permission("terminal").
 """Terminal WebSocket — interactive PTY sessions per agent (P1.4).
 
   WS /api/agents/{agent_id}/terminal/ws?token=<JWT>&session_id=&cols=&rows=
@@ -67,7 +68,7 @@ from starlette.websockets import WebSocketState
 
 from octop.api.common.agent import assert_agent_owner
 from octop.api.common.agent_workspace import resolve_agent_workspace_dir
-from octop.api.deps import get_server, require_permission, resolve_user_from_token
+from octop.api.deps import get_server, require_local_control, resolve_user_from_token
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.users.permissions import user_has_permission
 from octop.infra.utils import posix_compat
@@ -445,7 +446,7 @@ def _arm_detach_cleanup(session: _PtySession) -> None:
 @router.get("/agents/{agent_id}/terminal/context")
 async def terminal_context(
     agent_id: str,
-    user: Any = Depends(require_permission("terminal")),
+    user: Any = Depends(require_local_control("terminal", "shell")),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Return system context for the AI terminal panel."""

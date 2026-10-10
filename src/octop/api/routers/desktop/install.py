@@ -1,3 +1,4 @@
+# Local control gate wraps require_permission("desktop").
 """Desktop environment installation (SSE)."""
 
 from __future__ import annotations
@@ -7,7 +8,7 @@ from collections.abc import AsyncGenerator
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from octop.api.deps import require_permission
+from octop.api.deps import require_local_control
 from octop.infra.desktop.setup import install_desktop_stream
 from octop.infra.users.identity import User
 from octop.infra.utils.locale import resolve_request_locale
@@ -18,7 +19,7 @@ router = APIRouter()
 @router.post("/desktop/install")
 async def install_desktop(
     request: Request,
-    _user: User = Depends(require_permission("desktop")),
+    _user: User = Depends(require_local_control("desktop", "desktop")),
 ) -> StreamingResponse:
     """Stream virtual desktop installation progress as SSE (admin only).
 

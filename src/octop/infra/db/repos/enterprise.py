@@ -295,6 +295,20 @@ class EnterpriseRepo:
             ).fetchone()
         return TeamControlPolicyRow.from_row(row) if row else None
 
+    def control_allowed_for_user(self, user_id: int, control: str) -> bool:
+        """Return whether every configured team policy permits a local control."""
+        memberships = self.list_memberships_for_user(user_id)
+        policies = [
+            self.get_control_policy(row.team_id)
+            for row in memberships
+            if row.team_id and self.get_control_policy(row.team_id) is not None
+        ]
+        if not policies:
+            return True
+        if control not in {"shell", "browser", "desktop", "filesystem", "network"}:
+            raise ValueError(f"unknown local control: {control}")
+        return all(bool(getattr(policy, f"{control}_enabled")) for policy in policies)
+
     def upsert_control_policy(
         self,
         team_id: str,

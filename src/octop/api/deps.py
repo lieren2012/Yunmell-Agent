@@ -186,6 +186,27 @@ def require_permission(key: str) -> Callable[..., Awaitable[User]]:
     return _dep
 
 
+def require_local_control(permission: str, control: str) -> Callable[..., Awaitable[User]]:
+    """Require a module permission and the user's team local-control policy."""
+    base = require_permission(permission)
+
+    async def _dep(
+        user: User = Depends(base),
+        server: OctopServer = Depends(get_server),
+    ) -> User:
+        if user.is_admin or server.services.enterprise_repo.control_allowed_for_user(
+            user.id, control
+        ):
+            return user
+        raise OctopError(
+            ErrorCode.FORBIDDEN,
+            "this local control is disabled for your team",
+            details={"control": control},
+        )
+
+    return _dep
+
+
 def require_admin() -> Callable[..., Awaitable[User]]:
     """Dependency factory: require the admin role (no module key)."""
 
