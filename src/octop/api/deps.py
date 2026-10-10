@@ -186,9 +186,11 @@ def require_permission(key: str) -> Callable[..., Awaitable[User]]:
     return _dep
 
 
-def require_local_control(permission: str, control: str) -> Callable[..., Awaitable[User]]:
+def require_local_control(
+    permission: str | None, control: str
+) -> Callable[..., Awaitable[User]]:
     """Require a module permission and the user's team local-control policy."""
-    base = require_permission(permission)
+    base = require_permission(permission) if permission is not None else current_user
 
     async def _dep(
         user: User = Depends(base),

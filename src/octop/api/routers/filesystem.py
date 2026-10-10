@@ -23,7 +23,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
-from octop.api.deps import current_user, get_server
+from octop.api.deps import get_server, require_local_control
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.users.identity import User
 from octop.infra.users.resource_policy import (
@@ -76,7 +76,7 @@ class RenameBody(BaseModel):
     summary="Default root_dir picker bounds for the current user",
 )
 async def filesystem_defaults(
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_control(None, "filesystem")),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Return browse-tree / default root_dir for the current user.
@@ -115,7 +115,7 @@ async def filesystem_defaults(
     summary="Browse-tree roots available to the current user",
 )
 async def filesystem_roots(
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_control(None, "filesystem")),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """List the roots the root_dir picker may browse.
@@ -131,7 +131,7 @@ async def filesystem_roots(
 @router.get("/dirs")
 async def list_host_dirs(
     path: str = Query("/", description="Absolute host directory to list"),
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_control(None, "filesystem")),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Single-level directory listing for lazy folder pickers."""
@@ -152,7 +152,7 @@ async def list_host_dirs(
 @router.post("/probe")
 async def probe_host_dir(
     body: ProbeBody,
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_control(None, "filesystem")),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Check whether Octop can use *path* as a local backend root_dir."""
@@ -170,7 +170,7 @@ async def probe_host_dir(
     summary="Best-effort ensure bubblewrap for scoped root_dir",
 )
 async def ensure_bwrap(
-    _: Any = Depends(current_user),
+    _: Any = Depends(require_local_control(None, "filesystem")),
 ) -> dict[str, Any]:
     """Ensure ``bwrap`` is available when saving a non-host-root backend.
 
@@ -186,7 +186,7 @@ async def ensure_bwrap(
     summary="Detect whether Docker CLI/daemon are available",
 )
 async def get_docker_status(
-    _: Any = Depends(current_user),
+    _: Any = Depends(require_local_control(None, "filesystem")),
 ) -> dict[str, Any]:
     """Probe Docker without attempting installation.
 
@@ -200,7 +200,7 @@ async def get_docker_status(
     summary="Best-effort ensure Docker Engine for sandbox backends",
 )
 async def post_ensure_docker(
-    _: Any = Depends(current_user),
+    _: Any = Depends(require_local_control(None, "filesystem")),
 ) -> dict[str, Any]:
     """Detect Docker; on Linux with passwordless sudo, try package install.
 
@@ -213,7 +213,7 @@ async def post_ensure_docker(
 @router.post("/mkdir")
 async def mkdir_host_dir(
     body: MkdirBody,
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_control(None, "filesystem")),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Create a child directory under *path* for root_dir pickers."""
@@ -233,7 +233,7 @@ async def mkdir_host_dir(
 @router.post("/rename")
 async def rename_host_directory(
     body: RenameBody,
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_control(None, "filesystem")),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     """Rename a host directory (basename only) for root_dir pickers."""
