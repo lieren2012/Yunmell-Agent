@@ -49,6 +49,8 @@ export default function EnterprisePage() {
     filesystem_enabled: true,
     network_enabled: true,
   });
+  const [memberUserId, setMemberUserId] = useState<number | null>(null);
+  const [memberRole, setMemberRole] = useState("member");
   const selectedTeam = useMemo(
     () => teams.find((team) => team.team_id === teamId),
     [teams, teamId],
@@ -274,6 +276,40 @@ export default function EnterprisePage() {
             locale={{ emptyText: "暂无成员" }}
           />
         </Card>
+      <Card title="添加或调整成员">
+        <Space wrap>
+          <InputNumber
+            min={1}
+            placeholder="用户 ID"
+            value={memberUserId ?? undefined}
+            onChange={(value) => setMemberUserId(value)}
+          />
+          <Select
+            value={memberRole}
+            onChange={setMemberRole}
+            options={[
+              { value: "owner", label: "负责人" },
+              { value: "admin", label: "管理员" },
+              { value: "member", label: "成员" },
+            ]}
+          />
+          <Button
+            disabled={!orgId || !teamId || !memberUserId}
+            onClick={async () => {
+              if (!orgId || !teamId || !memberUserId) return;
+              await enterpriseApi.upsertMember(orgId, {
+                user_id: memberUserId,
+                team_id: teamId,
+                role: memberRole,
+              });
+              setMembers(await enterpriseApi.members(orgId));
+              message.success("成员已更新");
+            }}
+          >
+            保存成员
+          </Button>
+        </Space>
+      </Card>
         <Button
           type="primary"
           disabled={!selectedTeam}
