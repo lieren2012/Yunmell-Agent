@@ -272,6 +272,9 @@ async def prepare_dashboard_turn(
             ErrorCode.SLASH_BAD_ARGS,
             "default_model must reference an enabled model",
         )
+    from octop.infra.users.enterprise_policy import assert_model_allowed
+
+    assert_model_allowed(server, user, model_ref)
     composer_updates: dict[str, Any] = {}
     if model_ref is not None:
         composer_updates["model_ref"] = model_ref

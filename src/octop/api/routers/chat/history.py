@@ -561,6 +561,9 @@ async def patch_thread(
                 ErrorCode.SLASH_BAD_ARGS,
                 "model_ref must reference an enabled model",
             )
+        from octop.infra.users.enterprise_policy import assert_model_allowed
+
+        assert_model_allowed(server, user, model_ref)
     if "reasoning_mode" in body.model_fields_set:
         reasoning_mode = body.reasoning_mode
     if "reasoning_effort" in body.model_fields_set:

@@ -156,6 +156,14 @@ class EnterpriseRepo:
             ).fetchall()
         return map_rows(rows, OrganizationMemberRow)
 
+    def list_memberships_for_user(self, user_id: int) -> list[OrganizationMemberRow]:
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM organization_members WHERE user_id = ? ORDER BY organization_id",
+                (user_id,),
+            ).fetchall()
+        return map_rows(rows, OrganizationMemberRow)
+
     def upsert_member(
         self, organization_id: str, user_id: int, team_id: str | None, role: str
     ) -> OrganizationMemberRow:
@@ -185,6 +193,20 @@ class EnterpriseRepo:
         return [
             {"provider_name": str(row["provider_name"]), "model": str(row["model"])} for row in rows
         ]
+
+    def model_allowed_for_user(self, user_id: int, model_ref: str) -> bool:
+        team_ids = [row.team_id for row in self.list_memberships_for_user(user_id) if row.team_id]
+        if not team_ids:
+            return True
+        provider, separator, model = model_ref.partition("/")
+        if not separator or not provider or not model:
+            return True
+        allowed = {
+            (item["provider_name"], item["model"])
+            for team_id in team_ids
+            for item in self.list_allowed_models(team_id)
+        }
+        return not allowed or (provider, model) in allowed
 
     def replace_allowed_models(self, team_id: str, models: list[tuple[str, str]]) -> None:
         ts = now_ts()

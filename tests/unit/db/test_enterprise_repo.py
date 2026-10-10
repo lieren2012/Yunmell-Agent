@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.enterprise import EnterpriseRepo
+from octop.infra.users.enterprise_policy import assert_model_allowed
 
 
 @pytest.fixture
@@ -38,6 +40,7 @@ def test_enterprise_repo_organizes_teams_and_members(db: SqlitePool) -> None:
     assert updated.id == member.id
     assert updated.team_id is None
     assert updated.role == "member"
+    repo.upsert_member(organization.organization_id, 1, team.team_id, "member")
 
     repo.replace_allowed_models(team.team_id, [("openai", "gpt-5"), ("openai", "gpt-5")])
     assert repo.list_allowed_models(team.team_id) == [{"provider_name": "openai", "model": "gpt-5"}]
@@ -50,3 +53,12 @@ def test_enterprise_repo_organizes_teams_and_members(db: SqlitePool) -> None:
     )
     assert quota.token_limit == 100000
     assert repo.get_quota(team.team_id) == quota
+
+    class Services:
+        enterprise_repo = repo
+
+    server = SimpleNamespace(services=Services())
+    user = SimpleNamespace(id=1, is_admin=False)
+    assert_model_allowed(server, user, "openai/gpt-5")
+    with pytest.raises(Exception, match="not allowed"):
+        assert_model_allowed(server, user, "openai/other")
