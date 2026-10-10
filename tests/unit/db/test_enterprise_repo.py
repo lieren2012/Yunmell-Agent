@@ -40,6 +40,8 @@ def test_enterprise_repo_organizes_teams_and_members(db: SqlitePool) -> None:
     assert repo.list_organizations()[0].name == "云迈科技"
     assert repo.list_teams(organization.organization_id)[0].name == "研发团队"
     assert repo.list_members(organization.organization_id)[0].user_id == 1
+    assert repo.control_allowed_for_user(1, "shell") is False
+    assert repo.control_allowed_for_user(1, "filesystem") is True
 
     updated = repo.upsert_member(organization.organization_id, 1, None, "member")
     assert updated.id == member.id
