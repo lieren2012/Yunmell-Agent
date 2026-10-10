@@ -67,6 +67,7 @@ coverage.xml
 
 # Node / frontend
 node_modules/
+files_else/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
