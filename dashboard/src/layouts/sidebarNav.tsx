@@ -19,6 +19,7 @@ import {
   GraduationCap,
   Shield,
   PanelsTopLeft,
+  Building2,
 } from "lucide-react";
 import type { OctopUser } from "../api/modules/auth";
 import { navAllowed, userCan } from "../utils/permissions";
@@ -267,6 +268,14 @@ export function buildNavSections(
       path: "/admin/users",
       icon: <UsersIcon size={iconSize} strokeWidth={iconStroke} />,
       labelKey: "nav.adminUsers",
+    });
+  }
+  if (navAllowed(user, "admin-enterprise")) {
+    adminItems.push({
+      key: "admin-enterprise",
+      path: "/admin/enterprise",
+      icon: <Building2 size={iconSize} strokeWidth={iconStroke} />,
+      labelKey: "nav.adminEnterprise",
     });
   }
   if (navAllowed(user, "models")) {

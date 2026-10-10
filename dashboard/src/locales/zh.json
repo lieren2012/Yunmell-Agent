@@ -256,6 +256,7 @@
     "newVersionBadge": "有新版本",
     "admin": "管理",
     "adminUsers": "用户",
+    "adminEnterprise": "企业管理",
     "adminSso": "单点登录",
     "adminStorage": "存储",
     "adminAudit": "审计日志",

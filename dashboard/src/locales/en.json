@@ -256,6 +256,7 @@
     "newVersionBadge": "New version",
     "admin": "Admin",
     "adminUsers": "Users",
+    "adminEnterprise": "Enterprise",
     "adminSso": "Single sign-on",
     "adminStorage": "Storage",
     "adminAudit": "Audit log",

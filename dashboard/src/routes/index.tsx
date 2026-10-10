@@ -28,6 +28,7 @@ const AdvancedSettingsPage = lazy(
 );
 const AdminStoragePage = lazy(() => import("../pages/Admin/Storage"));
 const AdminPluginsPage = lazy(() => import("../pages/Admin/Plugins"));
+const AdminEnterprisePage = lazy(() => import("../pages/Admin/Enterprise"));
 const AgentConfigPage = lazy(() => import("../pages/Agent/Config"));
 
 // Misc
@@ -88,6 +89,7 @@ export const pathToKey: Record<string, string> = {
   "/admin/models": "models",
   // Admin
   "/admin/users": "admin-users",
+  "/admin/enterprise": "admin-enterprise",
   "/admin/backend": "admin-storage",
   "/admin/plugins": "admin-plugins",
   "/admin/advanced": "admin-advanced",
@@ -217,6 +219,7 @@ export const routeConfigs: RouteConfig[] = [
 
   // Admin (RequirePermission wrapper applied in MainLayout)
   { path: "/admin/users", element: <OctopAdminUsersPage /> },
+  { path: "/admin/enterprise", element: <AdminEnterprisePage /> },
   {
     path: "/admin/sso",
     element: <Navigate to="/admin/users?tab=oidc" replace />,
