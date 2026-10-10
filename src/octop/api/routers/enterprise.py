@@ -36,6 +36,14 @@ class QuotaBody(BaseModel):
     concurrency_limit: int | None = Field(default=None, ge=0)
 
 
+class ControlPolicyBody(BaseModel):
+    shell_enabled: bool = False
+    browser_enabled: bool = False
+    desktop_enabled: bool = False
+    filesystem_enabled: bool = True
+    network_enabled: bool = True
+
+
 def _repo(server: Any) -> EnterpriseRepo:
     return server.services.enterprise_repo
 
@@ -293,3 +301,50 @@ async def set_team_quota(
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
+
+
+def _control_payload(row: Any) -> dict[str, Any]:
+    return {
+        "team_id": row.team_id,
+        "shell_enabled": row.shell_enabled,
+        "browser_enabled": row.browser_enabled,
+        "desktop_enabled": row.desktop_enabled,
+        "filesystem_enabled": row.filesystem_enabled,
+        "network_enabled": row.network_enabled,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+@router.get(
+    "/organizations/{organization_id}/teams/{team_id}/controls",
+    summary="Get team local control policy",
+)
+async def get_team_controls(
+    organization_id: str,
+    team_id: str,
+    _: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any] | None:
+    _team_or_404(server, organization_id, team_id)
+    row = _repo(server).get_control_policy(team_id)
+    return _control_payload(row) if row else None
+
+
+@router.put(
+    "/organizations/{organization_id}/teams/{team_id}/controls",
+    summary="Set team local control policy",
+)
+async def set_team_controls(
+    organization_id: str,
+    team_id: str,
+    body: ControlPolicyBody,
+    actor: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    _team_or_404(server, organization_id, team_id)
+    row = _repo(server).upsert_control_policy(team_id, **body.model_dump())
+    server.services.audit_repo.write(
+        actor=actor.username, action="team.controls.update", target=team_id
+    )
+    return _control_payload(row)

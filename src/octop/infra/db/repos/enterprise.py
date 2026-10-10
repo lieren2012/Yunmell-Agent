@@ -97,6 +97,31 @@ class TeamQuotaRow:
         )
 
 
+@dataclass(frozen=True)
+class TeamControlPolicyRow:
+    team_id: str
+    shell_enabled: bool
+    browser_enabled: bool
+    desktop_enabled: bool
+    filesystem_enabled: bool
+    network_enabled: bool
+    created_at: int
+    updated_at: int
+
+    @classmethod
+    def from_row(cls, row: DbRow) -> TeamControlPolicyRow:
+        return cls(
+            team_id=str(row["team_id"]),
+            shell_enabled=bool(row["shell_enabled"]),
+            browser_enabled=bool(row["browser_enabled"]),
+            desktop_enabled=bool(row["desktop_enabled"]),
+            filesystem_enabled=bool(row["filesystem_enabled"]),
+            network_enabled=bool(row["network_enabled"]),
+            created_at=int(row["created_at"]),
+            updated_at=int(row["updated_at"]),
+        )
+
+
 class EnterpriseRepo:
     def __init__(self, db: DatabasePool) -> None:
         self._db = db
@@ -260,5 +285,48 @@ class EnterpriseRepo:
                 (team_id, period, token_limit, request_limit, concurrency_limit, ts, ts),
             )
         row = self.get_quota(team_id)
+        assert row is not None
+        return row
+
+    def get_control_policy(self, team_id: str) -> TeamControlPolicyRow | None:
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM team_control_policy WHERE team_id = ?", (team_id,)
+            ).fetchone()
+        return TeamControlPolicyRow.from_row(row) if row else None
+
+    def upsert_control_policy(
+        self,
+        team_id: str,
+        *,
+        shell_enabled: bool,
+        browser_enabled: bool,
+        desktop_enabled: bool,
+        filesystem_enabled: bool,
+        network_enabled: bool,
+    ) -> TeamControlPolicyRow:
+        ts = now_ts()
+        with self._db.transaction() as conn:
+            conn.execute(
+                """INSERT INTO team_control_policy(
+                team_id, shell_enabled, browser_enabled, desktop_enabled,
+                filesystem_enabled, network_enabled, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(team_id) DO UPDATE SET shell_enabled = excluded.shell_enabled,
+                browser_enabled = excluded.browser_enabled, desktop_enabled = excluded.desktop_enabled,
+                filesystem_enabled = excluded.filesystem_enabled, network_enabled = excluded.network_enabled,
+                updated_at = excluded.updated_at""",
+                (
+                    team_id,
+                    int(shell_enabled),
+                    int(browser_enabled),
+                    int(desktop_enabled),
+                    int(filesystem_enabled),
+                    int(network_enabled),
+                    ts,
+                    ts,
+                ),
+            )
+        row = self.get_control_policy(team_id)
         assert row is not None
         return row

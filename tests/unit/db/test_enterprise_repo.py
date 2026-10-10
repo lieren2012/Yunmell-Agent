@@ -54,6 +54,17 @@ def test_enterprise_repo_organizes_teams_and_members(db: SqlitePool) -> None:
     )
     assert quota.token_limit == 100000
     assert repo.get_quota(team.team_id) == quota
+    controls = repo.upsert_control_policy(
+        team.team_id,
+        shell_enabled=False,
+        browser_enabled=True,
+        desktop_enabled=False,
+        filesystem_enabled=True,
+        network_enabled=False,
+    )
+    assert controls.browser_enabled is True
+    assert controls.network_enabled is False
+    assert repo.get_control_policy(team.team_id) == controls
 
     class Services:
         enterprise_repo = repo
