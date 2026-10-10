@@ -70,3 +70,25 @@ async def test_enterprise_organization_team_policies_round_trip(env):
     )
     assert listed.status_code == 200
     assert listed.json()[0]["user_id"] == user_id
+
+
+async def test_enterprise_management_requires_users_permission(env):
+    client, _, admin_auth = env
+    created = await client.post(
+        "/api/users",
+        headers=admin_auth,
+        json={"username": "enterprise-reader", "password": "TestPass12", "role": "user"},
+    )
+    assert created.status_code == 201
+    login = await client.post(
+        "/api/auth/login",
+        json={"username": "enterprise-reader", "password": "TestPass12"},
+    )
+    assert login.status_code == 200
+    member_auth = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    denied = await client.get(
+        "/api/admin/enterprise/organizations",
+        headers=member_auth,
+    )
+    assert denied.status_code == 403
