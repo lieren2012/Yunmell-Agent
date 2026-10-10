@@ -271,7 +271,7 @@ export default function LoginPage() {
       >
         <img
           src={
-            isDark ? "/logo_horizontal_white.png" : "/logo_horizontal_dark.png"
+            isDark ? "/logo_horizontal_white.svg" : "/logo_horizontal_dark.svg"
           }
           alt="Octop"
           style={{
