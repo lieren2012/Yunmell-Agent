@@ -92,3 +92,39 @@ async def test_enterprise_management_requires_users_permission(env):
         headers=member_auth,
     )
     assert denied.status_code == 403
+
+
+async def test_deleting_user_removes_enterprise_membership(env):
+    client, _, admin_auth = env
+    organization = await client.post(
+        "/api/admin/enterprise/organizations",
+        headers=admin_auth,
+        json={"name": "级联删除测试企业"},
+    )
+    organization_id = organization.json()["organization_id"]
+    team = await client.post(
+        f"/api/admin/enterprise/organizations/{organization_id}/teams",
+        headers=admin_auth,
+        json={"name": "删除测试团队"},
+    )
+    team_id = team.json()["team_id"]
+    user = await client.post(
+        "/api/users",
+        headers=admin_auth,
+        json={"username": "enterprise-delete-me", "password": "TestPass12", "role": "user"},
+    )
+    user_id = user.json()["id"]
+    await client.put(
+        f"/api/admin/enterprise/organizations/{organization_id}/members",
+        headers=admin_auth,
+        json={"user_id": user_id, "team_id": team_id, "role": "member"},
+    )
+
+    deleted = await client.delete(f"/api/users/{user_id}", headers=admin_auth)
+    assert deleted.status_code in (200, 204)
+    members = await client.get(
+        f"/api/admin/enterprise/organizations/{organization_id}/members",
+        headers=admin_auth,
+    )
+    assert members.status_code == 200
+    assert all(row["user_id"] != user_id for row in members.json())
