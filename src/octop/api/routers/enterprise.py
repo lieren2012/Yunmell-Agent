@@ -25,6 +25,17 @@ class MemberBody(BaseModel):
     role: str = Field(default="member", pattern="^(owner|admin|member)$")
 
 
+class ModelPolicyBody(BaseModel):
+    models: list[dict[str, str]] = Field(default_factory=list)
+
+
+class QuotaBody(BaseModel):
+    period: str = Field(default="monthly", pattern="^(monthly|weekly|daily)$")
+    token_limit: int | None = Field(default=None, ge=0)
+    request_limit: int | None = Field(default=None, ge=0)
+    concurrency_limit: int | None = Field(default=None, ge=0)
+
+
 def _repo(server: Any) -> EnterpriseRepo:
     return server.services.enterprise_repo
 
@@ -177,6 +188,108 @@ async def upsert_member(
         "user_id": row.user_id,
         "team_id": row.team_id,
         "role": row.role,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def _team_or_404(server: Any, organization_id: str, team_id: str):
+    repo = _repo(server)
+    if repo.get_organization(organization_id) is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "organization not found")
+    team = next(
+        (item for item in repo.list_teams(organization_id) if item.team_id == team_id), None
+    )
+    if team is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "team not found")
+    return team
+
+
+@router.get(
+    "/organizations/{organization_id}/teams/{team_id}/models", summary="List team model allowlist"
+)
+async def list_team_models(
+    organization_id: str,
+    team_id: str,
+    _: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> list[dict[str, str]]:
+    _team_or_404(server, organization_id, team_id)
+    return _repo(server).list_allowed_models(team_id)
+
+
+@router.put(
+    "/organizations/{organization_id}/teams/{team_id}/models",
+    summary="Replace team model allowlist",
+)
+async def replace_team_models(
+    organization_id: str,
+    team_id: str,
+    body: ModelPolicyBody,
+    actor: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> list[dict[str, str]]:
+    _team_or_404(server, organization_id, team_id)
+    models: list[tuple[str, str]] = []
+    for item in body.models:
+        provider = (item.get("provider_name") or "").strip()
+        model = (item.get("model") or "").strip()
+        if provider and model and (provider, model) not in models:
+            models.append((provider, model))
+    _repo(server).replace_allowed_models(team_id, models)
+    server.services.audit_repo.write(
+        actor=actor.username, action="team.models.replace", target=team_id
+    )
+    return _repo(server).list_allowed_models(team_id)
+
+
+@router.get("/organizations/{organization_id}/teams/{team_id}/quota", summary="Get team quota")
+async def get_team_quota(
+    organization_id: str,
+    team_id: str,
+    _: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any] | None:
+    _team_or_404(server, organization_id, team_id)
+    row = _repo(server).get_quota(team_id)
+    if row is None:
+        return None
+    return {
+        "team_id": row.team_id,
+        "period": row.period,
+        "token_limit": row.token_limit,
+        "request_limit": row.request_limit,
+        "concurrency_limit": row.concurrency_limit,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+@router.put("/organizations/{organization_id}/teams/{team_id}/quota", summary="Set team quota")
+async def set_team_quota(
+    organization_id: str,
+    team_id: str,
+    body: QuotaBody,
+    actor: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    _team_or_404(server, organization_id, team_id)
+    row = _repo(server).upsert_quota(
+        team_id,
+        period=body.period,
+        token_limit=body.token_limit,
+        request_limit=body.request_limit,
+        concurrency_limit=body.concurrency_limit,
+    )
+    server.services.audit_repo.write(
+        actor=actor.username, action="team.quota.update", target=team_id
+    )
+    return {
+        "team_id": row.team_id,
+        "period": row.period,
+        "token_limit": row.token_limit,
+        "request_limit": row.request_limit,
+        "concurrency_limit": row.concurrency_limit,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }

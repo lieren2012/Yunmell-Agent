@@ -72,6 +72,31 @@ class OrganizationMemberRow:
         )
 
 
+@dataclass(frozen=True)
+class TeamQuotaRow:
+    team_id: str
+    period: str
+    token_limit: int | None
+    request_limit: int | None
+    concurrency_limit: int | None
+    created_at: int
+    updated_at: int
+
+    @classmethod
+    def from_row(cls, row: DbRow) -> TeamQuotaRow:
+        return cls(
+            team_id=str(row["team_id"]),
+            period=str(row["period"]),
+            token_limit=int(row["token_limit"]) if row["token_limit"] is not None else None,
+            request_limit=int(row["request_limit"]) if row["request_limit"] is not None else None,
+            concurrency_limit=(
+                int(row["concurrency_limit"]) if row["concurrency_limit"] is not None else None
+            ),
+            created_at=int(row["created_at"]),
+            updated_at=int(row["updated_at"]),
+        )
+
+
 class EnterpriseRepo:
     def __init__(self, db: DatabasePool) -> None:
         self._db = db
@@ -149,3 +174,52 @@ class EnterpriseRepo:
             ).fetchone()
         assert row is not None
         return OrganizationMemberRow.from_row(row)
+
+    def list_allowed_models(self, team_id: str) -> list[dict[str, str]]:
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT provider_name, model FROM team_model_allowlist "
+                "WHERE team_id = ? ORDER BY provider_name, model",
+                (team_id,),
+            ).fetchall()
+        return [
+            {"provider_name": str(row["provider_name"]), "model": str(row["model"])} for row in rows
+        ]
+
+    def replace_allowed_models(self, team_id: str, models: list[tuple[str, str]]) -> None:
+        ts = now_ts()
+        unique_models = list(dict.fromkeys(models))
+        with self._db.transaction() as conn:
+            conn.execute("DELETE FROM team_model_allowlist WHERE team_id = ?", (team_id,))
+            conn.executemany(
+                "INSERT INTO team_model_allowlist(team_id, provider_name, model, created_at) VALUES (?, ?, ?, ?)",
+                [(team_id, provider, model, ts) for provider, model in unique_models],
+            )
+
+    def get_quota(self, team_id: str) -> TeamQuotaRow | None:
+        with self._db.connect() as conn:
+            row = conn.execute("SELECT * FROM team_quotas WHERE team_id = ?", (team_id,)).fetchone()
+        return TeamQuotaRow.from_row(row) if row else None
+
+    def upsert_quota(
+        self,
+        team_id: str,
+        *,
+        period: str,
+        token_limit: int | None,
+        request_limit: int | None,
+        concurrency_limit: int | None,
+    ) -> TeamQuotaRow:
+        ts = now_ts()
+        with self._db.transaction() as conn:
+            conn.execute(
+                """INSERT INTO team_quotas(team_id, period, token_limit, request_limit, concurrency_limit, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(team_id) DO UPDATE SET period = excluded.period,
+                token_limit = excluded.token_limit, request_limit = excluded.request_limit,
+                concurrency_limit = excluded.concurrency_limit, updated_at = excluded.updated_at""",
+                (team_id, period, token_limit, request_limit, concurrency_limit, ts, ts),
+            )
+        row = self.get_quota(team_id)
+        assert row is not None
+        return row

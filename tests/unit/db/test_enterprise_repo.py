@@ -38,3 +38,15 @@ def test_enterprise_repo_organizes_teams_and_members(db: SqlitePool) -> None:
     assert updated.id == member.id
     assert updated.team_id is None
     assert updated.role == "member"
+
+    repo.replace_allowed_models(team.team_id, [("openai", "gpt-5"), ("openai", "gpt-5")])
+    assert repo.list_allowed_models(team.team_id) == [{"provider_name": "openai", "model": "gpt-5"}]
+    quota = repo.upsert_quota(
+        team.team_id,
+        period="monthly",
+        token_limit=100000,
+        request_limit=1000,
+        concurrency_limit=4,
+    )
+    assert quota.token_limit == 100000
+    assert repo.get_quota(team.team_id) == quota
