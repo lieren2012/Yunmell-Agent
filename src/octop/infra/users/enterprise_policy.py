@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from threading import Lock
 from typing import Any
 
 from octop.infra.errors import ErrorCode, OctopError
+
+_CONCURRENCY_LOCK = Lock()
+_ACTIVE_TEAM_TURNS: dict[str, int] = {}
 
 
 def assert_model_allowed(server: Any, user: Any, model_ref: str | None) -> None:
@@ -37,3 +41,41 @@ def assert_team_quota_available(enterprise_repo: Any, usage_repo: Any, user_id: 
             raise OctopError(
                 ErrorCode.FORBIDDEN, "your team request quota has been exhausted", status=429
             )
+
+
+def acquire_team_concurrency(enterprise_repo: Any, user_id: int) -> tuple[str, ...]:
+    """Reserve one active turn for every configured team concurrency limit."""
+    quotas = [
+        quota
+        for quota, _ in enterprise_repo.quotas_for_user(user_id)
+        if quota.concurrency_limit is not None
+    ]
+    if not quotas:
+        return ()
+    with _CONCURRENCY_LOCK:
+        blocked = [
+            quota.team_id
+            for quota in quotas
+            if _ACTIVE_TEAM_TURNS.get(quota.team_id, 0) >= quota.concurrency_limit
+        ]
+        if blocked:
+            raise OctopError(
+                ErrorCode.FORBIDDEN,
+                "your team concurrency quota has been exhausted",
+                status=429,
+            )
+        for quota in quotas:
+            _ACTIVE_TEAM_TURNS[quota.team_id] = _ACTIVE_TEAM_TURNS.get(quota.team_id, 0) + 1
+    return tuple(quota.team_id for quota in quotas)
+
+
+def release_team_concurrency(team_ids: tuple[str, ...]) -> None:
+    if not team_ids:
+        return
+    with _CONCURRENCY_LOCK:
+        for team_id in team_ids:
+            current = _ACTIVE_TEAM_TURNS.get(team_id, 0)
+            if current <= 1:
+                _ACTIVE_TEAM_TURNS.pop(team_id, None)
+            else:
+                _ACTIVE_TEAM_TURNS[team_id] = current - 1

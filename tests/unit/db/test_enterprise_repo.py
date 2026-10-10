@@ -9,7 +9,11 @@ from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.enterprise import EnterpriseRepo
 from octop.infra.errors import OctopError
-from octop.infra.users.enterprise_policy import assert_model_allowed
+from octop.infra.users.enterprise_policy import (
+    acquire_team_concurrency,
+    assert_model_allowed,
+    release_team_concurrency,
+)
 
 
 @pytest.fixture
@@ -82,7 +86,7 @@ def test_enterprise_repo_organizes_teams_and_members(db: SqlitePool) -> None:
         period="monthly",
         token_limit=1,
         request_limit=1,
-        concurrency_limit=None,
+        concurrency_limit=1,
     )
     with pytest.raises(OctopError, match="quota"):
         from octop.infra.users.enterprise_policy import assert_team_quota_available
@@ -95,3 +99,10 @@ def test_enterprise_repo_organizes_teams_and_members(db: SqlitePool) -> None:
                 return {"total_tokens": 2, "model_calls": 2}
 
         assert_team_quota_available(repo, Usage(), 1)
+
+    token = acquire_team_concurrency(repo, 1)
+    with pytest.raises(OctopError, match="concurrency"):
+        acquire_team_concurrency(repo, 1)
+    release_team_concurrency(token)
+    assert acquire_team_concurrency(repo, 1) == token
+    release_team_concurrency(token)
