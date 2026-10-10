@@ -499,3 +499,21 @@ class UsageRepo:
                 (user_id,),
             ).fetchone()
         return int(row["total"] if row is not None else 0)
+
+    def totals_for_users(self, user_ids: list[int], *, window: str = "all") -> dict[str, int]:
+        """Return aggregate tokens and model calls for a team membership set."""
+        if not user_ids:
+            return {"total_tokens": 0, "model_calls": 0}
+        placeholders = ",".join("?" for _ in user_ids)
+        start, end = resolve_usage_window(window)
+        with self._db.connect() as conn:
+            row = conn.execute(
+                f"SELECT COALESCE(SUM(total_tokens), 0) AS total_tokens, "
+                f"COALESCE(SUM(model_calls), 0) AS model_calls FROM usage_log "
+                f"WHERE user_id IN ({placeholders}) AND ts >= ? AND ts < ?",
+                [*user_ids, start, end],
+            ).fetchone()
+        return {
+            "total_tokens": int(row["total_tokens"] if row is not None else 0),
+            "model_calls": int(row["model_calls"] if row is not None else 0),
+        }

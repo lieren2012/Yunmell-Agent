@@ -8,6 +8,7 @@ import pytest
 from octop.infra.db.migrate import run_migrations
 from octop.infra.db.pool import SqlitePool
 from octop.infra.db.repos.enterprise import EnterpriseRepo
+from octop.infra.errors import OctopError
 from octop.infra.users.enterprise_policy import assert_model_allowed
 
 
@@ -60,5 +61,24 @@ def test_enterprise_repo_organizes_teams_and_members(db: SqlitePool) -> None:
     server = SimpleNamespace(services=Services())
     user = SimpleNamespace(id=1, is_admin=False)
     assert_model_allowed(server, user, "openai/gpt-5")
-    with pytest.raises(Exception, match="not allowed"):
+    with pytest.raises(OctopError, match="not allowed"):
         assert_model_allowed(server, user, "openai/other")
+
+    repo.upsert_quota(
+        team.team_id,
+        period="monthly",
+        token_limit=1,
+        request_limit=1,
+        concurrency_limit=None,
+    )
+    with pytest.raises(OctopError, match="quota"):
+        from octop.infra.users.enterprise_policy import assert_team_quota_available
+
+        class Usage:
+            @staticmethod
+            def totals_for_users(user_ids: list[int], *, window: str) -> dict[str, int]:
+                assert user_ids == [1]
+                assert window.startswith("month:")
+                return {"total_tokens": 2, "model_calls": 2}
+
+        assert_team_quota_available(repo, Usage(), 1)

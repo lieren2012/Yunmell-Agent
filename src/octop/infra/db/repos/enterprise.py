@@ -223,6 +223,23 @@ class EnterpriseRepo:
             row = conn.execute("SELECT * FROM team_quotas WHERE team_id = ?", (team_id,)).fetchone()
         return TeamQuotaRow.from_row(row) if row else None
 
+    def quotas_for_user(self, user_id: int) -> list[tuple[TeamQuotaRow, list[int]]]:
+        memberships = self.list_memberships_for_user(user_id)
+        out: list[tuple[TeamQuotaRow, list[int]]] = []
+        for membership in memberships:
+            if not membership.team_id:
+                continue
+            quota = self.get_quota(membership.team_id)
+            if quota is None:
+                continue
+            with self._db.connect() as conn:
+                rows = conn.execute(
+                    "SELECT user_id FROM organization_members WHERE team_id = ?",
+                    (membership.team_id,),
+                ).fetchall()
+            out.append((quota, [int(row["user_id"]) for row in rows]))
+        return out
+
     def upsert_quota(
         self,
         team_id: str,
