@@ -194,9 +194,10 @@ def require_local_control(permission: str, control: str) -> Callable[..., Awaita
         user: User = Depends(base),
         server: OctopServer = Depends(get_server),
     ) -> User:
-        if user.is_admin or server.services.enterprise_repo.control_allowed_for_user(
-            user.id, control
-        ):
+        services = server.services
+        if services is None:
+            raise OctopError(ErrorCode.INTERNAL_ERROR, "server services unavailable")
+        if user.is_admin or services.enterprise_repo.control_allowed_for_user(user.id, control):
             return user
         raise OctopError(
             ErrorCode.FORBIDDEN,

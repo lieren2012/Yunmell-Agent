@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from octop.api.deps import get_server, require_permission
-from octop.infra.db.repos.enterprise import EnterpriseRepo
+from octop.infra.db.repos.enterprise import EnterpriseRepo, TeamRow
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.users.identity import User
 
@@ -45,7 +45,7 @@ class ControlPolicyBody(BaseModel):
 
 
 def _repo(server: Any) -> EnterpriseRepo:
-    return server.services.enterprise_repo
+    return cast(EnterpriseRepo, server.services.enterprise_repo)
 
 
 def _name(value: str) -> str:
@@ -201,7 +201,7 @@ async def upsert_member(
     }
 
 
-def _team_or_404(server: Any, organization_id: str, team_id: str):
+def _team_or_404(server: Any, organization_id: str, team_id: str) -> TeamRow:
     repo = _repo(server)
     if repo.get_organization(organization_id) is None:
         raise OctopError(ErrorCode.NOT_FOUND, "organization not found")
