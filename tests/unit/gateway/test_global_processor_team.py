@@ -17,6 +17,7 @@ from octop.infra.db.repos.agents import AgentRepo
 from octop.infra.db.repos.sessions import SessionRepo
 from octop.infra.db.repos.threads import ThreadRepo
 from octop.infra.db.repos.users import UserRepo
+from octop.infra.errors import OctopError
 from octop.infra.gateway.process.processor import GlobalProcessor
 from octop.infra.gateway.slash.dispatcher import SlashDispatcher
 from octop.infra.gateway.threads import ThreadRegistry
@@ -1706,6 +1707,36 @@ def test_resolve_harness_model_dashboard_override_wins() -> None:
         "p/picked",
         needs_multimodal=False,
     )
+
+
+def test_resolve_harness_model_enforces_team_allowlist() -> None:
+    processor = GlobalProcessor(
+        agent_manager=MagicMock(),
+        thread_registry=MagicMock(),
+        audit_repo=MagicMock(),
+        agent_repo=MagicMock(),
+        user_repo=MagicMock(),
+        connector_repo=MagicMock(),
+        dispatcher=MagicMock(),
+        usage_repo=MagicMock(),
+        enterprise_repo=MagicMock(),
+        gateway=MagicMock(),
+    )
+    processor._agent_manager.get_thread_model.return_value = None
+    processor._agent_repo.get.return_value = MagicMock(default_model="p/blocked")
+    processor._agent_manager.providers.is_model_ref_usable.return_value = True
+    processor._agent_manager.providers.resolve_explicit_default_model.return_value = "p/blocked"
+    processor._user_repo.get.return_value = MagicMock(role="user")
+    processor._enterprise_repo.model_allowed_for_user.return_value = False
+
+    with pytest.raises(OctopError, match="not allowed"):
+        processor._resolve_harness_model(
+            "a1",
+            "t1",
+            None,
+            user_id=7,
+            needs_multimodal=False,
+        )
 
 
 def test_resolve_harness_model_drops_unusable_dashboard_override() -> None:

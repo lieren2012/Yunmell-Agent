@@ -30,7 +30,7 @@ from octop.infra.agents.teams.team_manager import (
 from octop.infra.agents.teams.team_manager import (
     stamp_team_host_chunk as _maybe_stamp_team_host,
 )
-from octop.infra.errors import OctopError
+from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.gateway.cli.events import message_event_to_cli_chunks
 from octop.infra.gateway.hitl.coordinator import (
     HitlAnswerOutcome,
@@ -147,6 +147,7 @@ class GlobalProcessor:
         knowledge_repo: Any | None = None,
         settings_repo: Any | None = None,
         provider_repo: Any | None = None,
+        enterprise_repo: Any | None = None,
         dispatcher: SlashDispatcher,
         usage_repo: Any | None = None,
         thread_message_repo: Any | None = None,
@@ -172,6 +173,7 @@ class GlobalProcessor:
         )
         self._dispatcher = dispatcher
         self._usage_repo = usage_repo
+        self._enterprise_repo = enterprise_repo
         self._thread_message_repo = thread_message_repo
         self._gateway = gateway
         self._hitl = hitl or HitlChannelCoordinator()
@@ -558,6 +560,19 @@ class GlobalProcessor:
             model_ref = fallback.strip() if isinstance(fallback, str) and fallback.strip() else None
         if not model_ref:
             return None
+        user_row = self._user_repo.get(user_id) if user_id else None
+        if (
+            self._enterprise_repo is not None
+            and model_ref
+            and user_row is not None
+            and str(getattr(user_row, "role", "")) != "admin"
+            and not self._enterprise_repo.model_allowed_for_user(user_id, model_ref)
+        ):
+            raise OctopError(
+                ErrorCode.FORBIDDEN,
+                "the selected model is not allowed for your team",
+                status=403,
+            )
         return providers.resolve_model_for_multimodal_turn(
             model_ref,
             needs_multimodal=needs_multimodal,

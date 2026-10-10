@@ -233,6 +233,7 @@ class Gateway:
             knowledge_repo=self._repos.knowledge_repo,
             settings_repo=self._repos.settings_repo,
             provider_repo=self._repos.provider_repo,
+            enterprise_repo=self._repos.enterprise_repo,
             dispatcher=self._dispatcher,
             usage_repo=self._repos.usage_repo,
             thread_message_repo=self._repos.thread_message_repo,
