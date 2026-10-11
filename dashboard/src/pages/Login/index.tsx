@@ -77,6 +77,7 @@ export default function LoginPage() {
   const { isDark } = useTheme();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const enterpriseSlug = searchParams.get("enterprise") || undefined;
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
@@ -222,7 +223,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const token = await captchaRef.current?.getToken();
-      const res = await authApi.login(username, password, token);
+      const res = await authApi.login(username, password, token, enterpriseSlug);
       setAuthToken(res.access_token, remember);
       await applyUserLocale(res.user.locale);
       void refreshServerLabels(res.user.locale);

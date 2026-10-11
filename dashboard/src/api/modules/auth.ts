@@ -192,13 +192,14 @@ export const authApi = {
     username: string,
     password: string,
     captchaToken?: string,
+    enterpriseSlug?: string,
   ): Promise<LoginResponse> => {
     const raw = await request<RawLoginResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify(
         captchaToken
-          ? { username, password, captcha_token: captchaToken }
-          : { username, password },
+          ? { username, password, captcha_token: captchaToken, enterprise_slug: enterpriseSlug }
+          : { username, password, enterprise_slug: enterpriseSlug },
       ),
     });
     return { ...raw, token: raw.access_token };

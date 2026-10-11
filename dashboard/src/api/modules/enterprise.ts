@@ -30,6 +30,17 @@ export interface TeamControls {
   filesystem_enabled: boolean;
   network_enabled: boolean;
 }
+export interface RegistrationApplication {
+  application_id: string;
+  organization_id: string;
+  user_id: number;
+  status: "pending" | "approved" | "rejected" | "needs_info";
+  submitted_at: number;
+  reviewed_at: number | null;
+  reviewed_by: number | null;
+  review_note: string | null;
+  supplement: string | null;
+}
 
 const json = (body: unknown): RequestInit => ({
   method: "PUT",
@@ -101,5 +112,19 @@ export const enterpriseApi = {
     request<TeamControls>(
       `/admin/enterprise/organizations/${org}/teams/${team}/controls`,
       json(body),
+    ),
+  applications: (org: string, status = "pending") =>
+    request<RegistrationApplication[]>(
+      `/admin/enterprise/organizations/${org}/registration-applications?status=${status}`,
+    ),
+  reviewApplication: (
+    org: string,
+    application: string,
+    status: RegistrationApplication["status"],
+    note?: string,
+  ) =>
+    request<RegistrationApplication>(
+      `/admin/enterprise/organizations/${org}/registration-applications/${application}/review`,
+      json({ status, note }),
     ),
 };

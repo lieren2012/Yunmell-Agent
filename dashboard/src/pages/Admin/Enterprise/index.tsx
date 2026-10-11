@@ -23,6 +23,7 @@ import {
   type EnterpriseTeam,
   type TeamControls,
   type TeamQuota,
+  type RegistrationApplication,
 } from "../../../api/modules/enterprise";
 
 const { Text } = Typography;
@@ -51,6 +52,7 @@ export default function EnterprisePage() {
   });
   const [memberUserId, setMemberUserId] = useState<number | null>(null);
   const [memberRole, setMemberRole] = useState("member");
+  const [applications, setApplications] = useState<RegistrationApplication[]>([]);
   const selectedTeam = useMemo(
     () => teams.find((team) => team.team_id === teamId),
     [teams, teamId],
@@ -66,10 +68,15 @@ export default function EnterprisePage() {
   }, []);
   useEffect(() => {
     if (!orgId) return;
-    void Promise.all([enterpriseApi.teams(orgId), enterpriseApi.members(orgId)])
-      .then(([nextTeams, nextMembers]) => {
+    void Promise.all([
+      enterpriseApi.teams(orgId),
+      enterpriseApi.members(orgId),
+      enterpriseApi.applications(orgId),
+    ])
+      .then(([nextTeams, nextMembers, nextApplications]) => {
         setTeams(nextTeams);
         setMembers(nextMembers);
+        setApplications(nextApplications);
         if (!teamId && nextTeams[0]) setTeamId(nextTeams[0].team_id);
       })
       .catch(() => message.error("团队数据加载失败"));
@@ -309,6 +316,69 @@ export default function EnterprisePage() {
             保存成员
           </Button>
         </Space>
+      </Card>
+      <Card title="待审核注册申请">
+        <List
+          size="small"
+          dataSource={applications}
+          locale={{ emptyText: "暂无待审核申请" }}
+          renderItem={(application) => (
+            <List.Item
+              actions={[
+                <Button
+                  key="approve"
+                  size="small"
+                  type="primary"
+                  onClick={async () => {
+                    await enterpriseApi.reviewApplication(
+                      orgId,
+                      application.application_id,
+                      "approved",
+                    );
+                    setApplications(await enterpriseApi.applications(orgId));
+                  }}
+                >
+                  通过
+                </Button>,
+                <Button
+                  key="reject"
+                  size="small"
+                  danger
+                  onClick={async () => {
+                    await enterpriseApi.reviewApplication(
+                      orgId,
+                      application.application_id,
+                      "rejected",
+                    );
+                    setApplications(await enterpriseApi.applications(orgId));
+                  }}
+                >
+                  驳回
+                </Button>,
+                <Button
+                  key="info"
+                  size="small"
+                  onClick={async () => {
+                    await enterpriseApi.reviewApplication(
+                      orgId,
+                      application.application_id,
+                      "needs_info",
+                      "请补充资料",
+                    );
+                    setApplications(await enterpriseApi.applications(orgId));
+                  }}
+                >
+                  补充资料
+                </Button>,
+              ]}
+            >
+              <List.Item.Meta
+                title={`用户 #${application.user_id}`}
+                description={application.supplement || "未填写补充资料"}
+              />
+            </List.Item>
+          )}
+        />
       </Card>
         <Button
           type="primary"
