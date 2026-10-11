@@ -110,6 +110,10 @@ def _decode(server: OctopServer, token: str) -> dict[str, Any]:
 def resolve_user_from_token(server: OctopServer, token: str) -> User:
     payload = _decode(server, token)
     assert server.user_manager is not None
+    assert server.services is not None
+    row = server.services.user_repo.get(int(payload["sub"]))
+    if row is None or row.disabled or row.approval_status != "approved":
+        raise OctopError(ErrorCode.USER_DISABLED, "user not active")
     user = server.user_manager.get_by_id(int(payload["sub"]))
     if user is None:
         raise OctopError(ErrorCode.USER_DISABLED, "user not active")
@@ -187,9 +191,7 @@ def require_permission(key: str) -> Callable[..., Awaitable[User]]:
     return _dep
 
 
-def require_local_control(
-    permission: str | None, control: str
-) -> Callable[..., Awaitable[User]]:
+def require_local_control(permission: str | None, control: str) -> Callable[..., Awaitable[User]]:
     """Require a module permission and the user's team local-control policy."""
     base = require_permission(permission) if permission is not None else current_user
 

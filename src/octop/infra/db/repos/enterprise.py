@@ -377,6 +377,11 @@ class EnterpriseRepo:
             )
             if status == "approved":
                 conn.execute(
+                    "INSERT INTO organization_members(organization_id, user_id, role, created_at, updated_at) "
+                    "VALUES (?, ?, 'member', ?, ?) ON CONFLICT(organization_id, user_id) DO NOTHING",
+                    (row.organization_id, row.user_id, ts, ts),
+                )
+                conn.execute(
                     "UPDATE users SET approval_status = 'approved', disabled = 0 WHERE id = ?",
                     (row.user_id,),
                 )

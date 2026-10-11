@@ -114,6 +114,8 @@ class UserRepo:
         sso_subject: str | None = None,
         permissions: builtins.list[str] | None = None,
         role_name: str | None = None,
+        disabled: bool = False,
+        approval_status: str = "approved",
     ) -> int:
         perms_json = json.dumps(permissions or [], ensure_ascii=False)
         with self._db.transaction() as conn:
@@ -121,8 +123,8 @@ class UserRepo:
                 conn,
                 "INSERT INTO users(username, password_hash, role, display_name, locale, "
                 "email, sso_provider_id, sso_subject, disabled, created_at, permissions, "
-                "role_name) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+                "role_name, approval_status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     username,
                     password_hash,
@@ -132,9 +134,11 @@ class UserRepo:
                     email,
                     sso_provider_id,
                     sso_subject,
+                    bool_int(disabled),
                     now_ts(),
                     perms_json,
                     role_name,
+                    approval_status,
                 ),
             )
 

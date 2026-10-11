@@ -130,6 +130,7 @@ class UserManager:
         permissions: builtins.list[str] | None = None,
         email: str | None = None,
         role_name: str | None = None,
+        pending_approval: bool = False,
     ) -> User:
         if not username:
             raise OctopError(ErrorCode.USERNAME_TAKEN, "username must not be empty")
@@ -165,6 +166,8 @@ class UserManager:
                     email=normalized_email,
                     permissions=keys,
                     role_name=role_name,
+                    disabled=pending_approval,
+                    approval_status="pending" if pending_approval else "approved",
                 )
             except Exception as exc:
                 if _is_unique_violation(exc) and normalized_email is not None:
@@ -181,7 +184,8 @@ class UserManager:
                 locale=loc,
                 permissions=keys,
             )
-            self._users[username] = user
+            if not pending_approval:
+                self._users[username] = user
             self._services.audit_repo.write(actor=username, action="user.create", target=username)
             return user
 
@@ -461,7 +465,7 @@ class UserManager:
         if row is None:
             return None
         now = int(time.time())
-        if row.disabled:
+        if row.disabled or row.approval_status != "approved":
             return None
         if not row.password_hash:
             return None

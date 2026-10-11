@@ -17,6 +17,7 @@ import LoginPage from "./pages/Login";
 import OidcComplete from "./pages/Login/OidcComplete";
 import SetupPage from "./pages/Setup";
 import InvitePage from "./pages/Invite";
+import EnterpriseRegisterPage from "./pages/EnterpriseRegister";
 import AuthGuard from "./components/AuthGuard";
 import OctopSpinner from "./components/OctopSpinner";
 import { AntdAppProvider } from "./components/AntdAppProvider";
@@ -136,6 +137,7 @@ function ThemedApp() {
             <Route path="/login/oidc/complete" element={<OidcComplete />} />
             <Route path="/setup" element={<SetupPage />} />
             <Route path="/invite" element={<InvitePage />} />
+            <Route path="/register" element={<EnterpriseRegisterPage />} />
             <Route
               path="/*"
               element={

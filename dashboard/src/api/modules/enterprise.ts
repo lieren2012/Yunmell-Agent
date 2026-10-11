@@ -139,6 +139,6 @@ export const enterpriseApi = {
   ) =>
     request<RegistrationApplication>(
       `/admin/enterprise/organizations/${org}/registration-applications/${application}/review`,
-      json({ status, note }),
+      { ...json({ status, note }), method: "POST" },
     ),
 };

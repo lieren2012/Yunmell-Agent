@@ -260,8 +260,8 @@ async def enterprise_register(
         role="user",
         display_name=body.display_name,
         email=body.email,
+        pending_approval=True,
     )
-    server.services.user_repo.set_disabled(user.id, True)
     application = server.services.enterprise_repo.create_registration_application(
         organization_id=organization.organization_id,
         user_id=user.id,
