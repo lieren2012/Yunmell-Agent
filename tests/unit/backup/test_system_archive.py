@@ -1232,7 +1232,7 @@ def test_refuse_newer_schema_backup_before_database_replace(
     assert excinfo.value.code == ErrorCode.BACKUP_SCHEMA_INCOMPATIBLE
     assert excinfo.value.details == {
         "archive_schema_version": 999,
-        "runtime_schema_version": 23,
+        "runtime_schema_version": 25,
     }
     with pool.connect() as conn:
         assert (

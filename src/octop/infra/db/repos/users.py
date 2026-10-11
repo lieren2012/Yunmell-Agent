@@ -64,6 +64,7 @@ class UserRow:
     permissions: builtins.list[str] = field(default_factory=list)
     role_name: str | None = None
     avatar_icon: str | None = None
+    approval_status: str = "approved"
 
     @classmethod
     def from_row(cls, r: DbRow) -> UserRow:
@@ -90,6 +91,9 @@ class UserRow:
             permissions=_parse_permissions(r["permissions"] if "permissions" in keys else None),
             role_name=role_name or None,
             avatar_icon=avatar_icon or None,
+            approval_status=(
+                str(r["approval_status"]) if "approval_status" in keys else "approved"
+            ),
         )
 
 

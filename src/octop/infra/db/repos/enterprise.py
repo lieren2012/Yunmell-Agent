@@ -16,15 +16,53 @@ class OrganizationRow:
     name: str
     created_at: int
     updated_at: int
+    login_slug: str | None = None
+    default_provider_name: str | None = None
+    default_model: str | None = None
 
     @classmethod
     def from_row(cls, row: DbRow) -> OrganizationRow:
+        keys = set(row.keys())
         return cls(
             int(row["id"]),
             str(row["organization_id"]),
             str(row["name"]),
             int(row["created_at"]),
             int(row["updated_at"]),
+            str(row["login_slug"]) if "login_slug" in keys and row["login_slug"] else None,
+            str(row["default_provider_name"])
+            if "default_provider_name" in keys and row["default_provider_name"]
+            else None,
+            str(row["default_model"]) if "default_model" in keys and row["default_model"] else None,
+        )
+
+
+@dataclass(frozen=True)
+class RegistrationApplicationRow:
+    id: int
+    application_id: str
+    organization_id: str
+    user_id: int
+    status: str
+    submitted_at: int
+    reviewed_at: int | None
+    reviewed_by: int | None
+    review_note: str | None
+    supplement: str | None
+
+    @classmethod
+    def from_row(cls, row: DbRow) -> RegistrationApplicationRow:
+        return cls(
+            id=int(row["id"]),
+            application_id=str(row["application_id"]),
+            organization_id=str(row["organization_id"]),
+            user_id=int(row["user_id"]),
+            status=str(row["status"]),
+            submitted_at=int(row["submitted_at"]),
+            reviewed_at=int(row["reviewed_at"]) if row["reviewed_at"] is not None else None,
+            reviewed_by=int(row["reviewed_by"]) if row["reviewed_by"] is not None else None,
+            review_note=str(row["review_note"]) if row["review_note"] else None,
+            supplement=str(row["supplement"]) if row["supplement"] else None,
         )
 
 
@@ -137,10 +175,27 @@ class EnterpriseRepo:
         with self._db.transaction() as conn:
             insert_returning_id(
                 conn,
-                "INSERT INTO organizations(organization_id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                (public_id, name, ts, ts),
+                "INSERT INTO organizations(organization_id, name, login_slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (public_id, name, public_id.lower(), ts, ts),
             )
         row = self.get_organization(public_id)
+        assert row is not None
+        return row
+
+    def get_organization_by_slug(self, login_slug: str) -> OrganizationRow | None:
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM organizations WHERE login_slug = ?", (login_slug.strip().lower(),)
+            ).fetchone()
+        return OrganizationRow.from_row(row) if row else None
+
+    def set_organization_slug(self, organization_id: str, login_slug: str) -> OrganizationRow:
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE organizations SET login_slug = ?, updated_at = ? WHERE organization_id = ?",
+                (login_slug.strip().lower(), now_ts(), organization_id),
+            )
+        row = self.get_organization(organization_id)
         assert row is not None
         return row
 
@@ -207,6 +262,116 @@ class EnterpriseRepo:
             ).fetchone()
         assert row is not None
         return OrganizationMemberRow.from_row(row)
+
+    def member_organization_ids(self, user_id: int) -> list[str]:
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT organization_id FROM organization_members WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+        return [str(row["organization_id"]) for row in rows]
+
+    def default_model_for_user(self, user_id: int) -> str | None:
+        with self._db.connect() as conn:
+            row = conn.execute(
+                """SELECT o.default_provider_name, o.default_model
+                FROM organizations o
+                INNER JOIN organization_members m ON m.organization_id = o.organization_id
+                WHERE m.user_id = ? AND o.default_provider_name IS NOT NULL
+                  AND o.default_model IS NOT NULL
+                ORDER BY o.organization_id LIMIT 1""",
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return f"{row['default_provider_name']}/{row['default_model']}"
+
+    def set_default_model(
+        self, organization_id: str, provider_name: str | None, model: str | None
+    ) -> OrganizationRow:
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE organizations SET default_provider_name = ?, default_model = ?, updated_at = ? WHERE organization_id = ?",
+                (provider_name, model, now_ts(), organization_id),
+            )
+        row = self.get_organization(organization_id)
+        assert row is not None
+        return row
+
+    def create_registration_application(
+        self,
+        *,
+        organization_id: str,
+        user_id: int,
+        supplement: str | None = None,
+    ) -> RegistrationApplicationRow:
+        ts = now_ts()
+        application_id = new_ulid()
+        with self._db.transaction() as conn:
+            insert_returning_id(
+                conn,
+                "INSERT INTO enterprise_registration_applications(application_id, organization_id, user_id, status, submitted_at, supplement) VALUES (?, ?, ?, 'pending', ?, ?)",
+                (application_id, organization_id, user_id, ts, supplement),
+            )
+        row = self.get_registration_application(application_id)
+        assert row is not None
+        return row
+
+    def get_registration_application(
+        self, application_id: str
+    ) -> RegistrationApplicationRow | None:
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM enterprise_registration_applications WHERE application_id = ?",
+                (application_id,),
+            ).fetchone()
+        return RegistrationApplicationRow.from_row(row) if row else None
+
+    def list_registration_applications(
+        self, organization_id: str, *, status: str | None = None
+    ) -> list[RegistrationApplicationRow]:
+        query = "SELECT * FROM enterprise_registration_applications WHERE organization_id = ?"
+        params: list[object] = [organization_id]
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY submitted_at DESC, id DESC"
+        with self._db.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return map_rows(rows, RegistrationApplicationRow)
+
+    def review_registration_application(
+        self,
+        application_id: str,
+        *,
+        status: str,
+        reviewer_id: int,
+        note: str | None = None,
+    ) -> RegistrationApplicationRow:
+        if status not in {"approved", "rejected", "needs_info"}:
+            raise ValueError("invalid application status")
+        row = self.get_registration_application(application_id)
+        if row is None:
+            raise ValueError("application_not_found")
+        ts = now_ts()
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE enterprise_registration_applications SET status = ?, reviewed_at = ?, reviewed_by = ?, review_note = ? WHERE application_id = ?",
+                (status, ts, reviewer_id, note, application_id),
+            )
+            if status == "approved":
+                conn.execute(
+                    "UPDATE users SET approval_status = 'approved', disabled = 0 WHERE id = ?",
+                    (row.user_id,),
+                )
+            else:
+                conn.execute(
+                    "UPDATE users SET approval_status = ?, disabled = 1 WHERE id = ?",
+                    (status, row.user_id),
+                )
+        updated = self.get_registration_application(application_id)
+        assert updated is not None
+        return updated
 
     def list_allowed_models(self, team_id: str) -> list[dict[str, str]]:
         with self._db.connect() as conn:

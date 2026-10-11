@@ -64,6 +64,15 @@ class LoginBody(BaseModel):
     username: str
     password: str
     captcha_token: str | None = Field(default=None, max_length=4096)
+    enterprise_slug: str | None = Field(default=None, max_length=120)
+
+
+class EnterpriseRegistrationBody(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=8, max_length=200)
+    display_name: str | None = Field(default=None, max_length=128)
+    email: str | None = Field(default=None, max_length=254)
+    supplement: str | None = Field(default=None, max_length=2000)
 
 
 class CaptchaPublicResponse(BaseModel):
@@ -196,6 +205,10 @@ async def login(
             user = await _authenticate_ldap(server, body.username, body.password, client_ip)
     if user is None:
         raise OctopError(ErrorCode.AUTH_FAILED, "invalid credentials")
+    if body.enterprise_slug and not _user_belongs_to_enterprise(
+        server, user.id, body.enterprise_slug
+    ):
+        raise OctopError(ErrorCode.AUTH_FAILED, "invalid enterprise credentials")
     secret = server.services.secret_repo.get("jwt")
     ttl = server.services.config.access_token_ttl_seconds
     token = sign_token(secret, sub=user.id, uname=user.username, role=user.role, ttl_seconds=ttl)
@@ -205,6 +218,79 @@ async def login(
         "expires_in": ttl,
         "user": _user_json(user, locale=user.locale),
     }
+
+
+def _user_belongs_to_enterprise(server: Any, user_id: int, login_slug: str) -> bool:
+    organization = server.services.enterprise_repo.get_organization_by_slug(login_slug)
+    if organization is None:
+        return False
+    return organization.organization_id in server.services.enterprise_repo.member_organization_ids(
+        user_id
+    )
+
+
+@router.get("/enterprises/{login_slug}", summary="Get public enterprise login info")
+async def enterprise_login_info(
+    login_slug: str, server: Any = Depends(get_server)
+) -> dict[str, Any]:
+    organization = server.services.enterprise_repo.get_organization_by_slug(login_slug)
+    if organization is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "enterprise not found")
+    return {
+        "organization_id": organization.organization_id,
+        "name": organization.name,
+        "login_slug": organization.login_slug,
+    }
+
+
+@router.post(
+    "/enterprises/{login_slug}/register", status_code=202, summary="Submit enterprise registration"
+)
+async def enterprise_register(
+    login_slug: str,
+    body: EnterpriseRegistrationBody,
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    organization = server.services.enterprise_repo.get_organization_by_slug(login_slug)
+    if organization is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "enterprise not found")
+    user = await server.user_manager.create(
+        username=body.username,
+        password=body.password,
+        role="user",
+        display_name=body.display_name,
+        email=body.email,
+    )
+    server.services.user_repo.set_disabled(user.id, True)
+    application = server.services.enterprise_repo.create_registration_application(
+        organization_id=organization.organization_id,
+        user_id=user.id,
+        supplement=body.supplement,
+    )
+    server.services.audit_repo.write(
+        actor=body.username,
+        action="enterprise.registration.submit",
+        target=application.application_id,
+        payload=f"organization_id={organization.organization_id}",
+    )
+    return {
+        "application_id": application.application_id,
+        "status": application.status,
+        "enterprise": organization.login_slug,
+    }
+
+
+@router.post("/enterprises/{login_slug}/login", summary="Sign in through an enterprise address")
+async def enterprise_login(
+    login_slug: str,
+    body: LoginBody,
+    request: Request,
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    organization = server.services.enterprise_repo.get_organization_by_slug(login_slug)
+    if organization is None:
+        raise OctopError(ErrorCode.AUTH_FAILED, "invalid enterprise credentials")
+    return await login(body.model_copy(update={"enterprise_slug": login_slug}), request, server)
 
 
 @router.post("/logout", status_code=204, summary="Sign out")
