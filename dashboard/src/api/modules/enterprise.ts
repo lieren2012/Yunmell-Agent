@@ -3,6 +3,9 @@ import { request } from "../request";
 export interface EnterpriseOrganization {
   organization_id: string;
   name: string;
+  login_slug?: string | null;
+  default_provider_name?: string | null;
+  default_model?: string | null;
 }
 export interface EnterpriseTeam {
   team_id: string;
@@ -57,6 +60,11 @@ export const enterpriseApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     }),
+  saveDefaultModel: (org: string, provider_name: string, model: string) =>
+    request<EnterpriseOrganization>(
+      `/admin/enterprise/organizations/${org}/default-model`,
+      json({ provider_name, model }),
+    ),
   teams: (org: string) =>
     request<EnterpriseTeam[]>(`/admin/enterprise/organizations/${org}/teams`),
   createTeam: (org: string, name: string) =>

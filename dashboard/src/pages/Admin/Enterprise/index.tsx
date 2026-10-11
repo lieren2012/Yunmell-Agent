@@ -53,6 +53,8 @@ export default function EnterprisePage() {
   const [memberUserId, setMemberUserId] = useState<number | null>(null);
   const [memberRole, setMemberRole] = useState("member");
   const [applications, setApplications] = useState<RegistrationApplication[]>([]);
+  const [defaultProvider, setDefaultProvider] = useState("");
+  const [defaultModel, setDefaultModel] = useState("");
   const selectedTeam = useMemo(
     () => teams.find((team) => team.team_id === teamId),
     [teams, teamId],
@@ -62,6 +64,11 @@ export default function EnterprisePage() {
     const data = await enterpriseApi.organizations();
     setOrgs(data);
     if (!orgId && data[0]) setOrgId(data[0].organization_id);
+    const selected = data.find((item) => item.organization_id === orgId) || data[0];
+    if (selected) {
+      setDefaultProvider(selected.default_provider_name || "");
+      setDefaultModel(selected.default_model || "");
+    }
   };
   useEffect(() => {
     void loadOrgs().catch(() => message.error("企业列表加载失败"));
@@ -316,6 +323,13 @@ export default function EnterprisePage() {
             保存成员
           </Button>
         </Space>
+      </Card>
+      <Card title="企业默认模型" extra={<Button type="primary" disabled={!orgId || !defaultProvider || !defaultModel} onClick={async () => { await enterpriseApi.saveDefaultModel(orgId, defaultProvider, defaultModel); await loadOrgs(); message.success("企业默认模型已保存"); }}>保存</Button>}>
+        <Space wrap>
+          <Input placeholder="Provider 名称，例如 openai" value={defaultProvider} onChange={(event) => setDefaultProvider(event.target.value)} />
+          <Input placeholder="模型 ID，例如 gpt-5" value={defaultModel} onChange={(event) => setDefaultModel(event.target.value)} />
+        </Space>
+        <Typography.Paragraph type="secondary">审核通过的企业成员会继承此模型；模型不可用时运行请求会明确失败。</Typography.Paragraph>
       </Card>
       <Card title="待审核注册申请">
         <List
