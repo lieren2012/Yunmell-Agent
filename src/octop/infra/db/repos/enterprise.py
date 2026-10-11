@@ -19,6 +19,7 @@ class OrganizationRow:
     login_slug: str | None = None
     default_provider_name: str | None = None
     default_model: str | None = None
+    registration_review_required: bool = True
 
     @classmethod
     def from_row(cls, row: DbRow) -> OrganizationRow:
@@ -34,6 +35,9 @@ class OrganizationRow:
             if "default_provider_name" in keys and row["default_provider_name"]
             else None,
             str(row["default_model"]) if "default_model" in keys and row["default_model"] else None,
+            bool(row["registration_review_required"])
+            if "registration_review_required" in keys
+            else True,
         )
 
 
@@ -298,6 +302,18 @@ class EnterpriseRepo:
         assert row is not None
         return row
 
+    def set_registration_review_required(
+        self, organization_id: str, required: bool
+    ) -> OrganizationRow:
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE organizations SET registration_review_required = ?, updated_at = ? WHERE organization_id = ?",
+                (int(required), now_ts(), organization_id),
+            )
+        row = self.get_organization(organization_id)
+        assert row is not None
+        return row
+
     def create_registration_application(
         self,
         *,
@@ -345,7 +361,7 @@ class EnterpriseRepo:
         application_id: str,
         *,
         status: str,
-        reviewer_id: int,
+        reviewer_id: int | None,
         note: str | None = None,
     ) -> RegistrationApplicationRow:
         if status not in {"approved", "rejected", "needs_info"}:

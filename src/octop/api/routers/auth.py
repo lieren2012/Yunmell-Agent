@@ -267,6 +267,16 @@ async def enterprise_register(
         user_id=user.id,
         supplement=body.supplement,
     )
+    if not organization.registration_review_required:
+        application = server.services.enterprise_repo.review_registration_application(
+            application.application_id,
+            status="approved",
+            reviewer_id=None,
+            note="auto-approved by enterprise policy",
+        )
+        server.services.enterprise_repo.upsert_member(
+            organization.organization_id, user.id, None, "member"
+        )
     server.services.audit_repo.write(
         actor=body.username,
         action="enterprise.registration.submit",

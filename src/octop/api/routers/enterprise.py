@@ -54,6 +54,10 @@ class DefaultModelBody(BaseModel):
     model: str = Field(min_length=1, max_length=200)
 
 
+class RegistrationPolicyBody(BaseModel):
+    review_required: bool
+
+
 def _repo(server: Any) -> EnterpriseRepo:
     return cast(EnterpriseRepo, server.services.enterprise_repo)
 
@@ -74,6 +78,7 @@ def _organization_payload(row: Any) -> dict[str, Any]:
         "updated_at": row.updated_at,
         "default_provider_name": row.default_provider_name,
         "default_model": row.default_model,
+        "registration_review_required": row.registration_review_required,
     }
 
 
@@ -457,5 +462,28 @@ async def set_enterprise_default_model(
         action="organization.default_model.update",
         target=organization_id,
         payload=f"provider={provider.name};model={model}",
+    )
+    return _organization_payload(row)
+
+
+@router.put(
+    "/organizations/{organization_id}/registration-policy",
+    summary="Set enterprise registration review policy",
+)
+async def set_registration_policy(
+    organization_id: str,
+    body: RegistrationPolicyBody,
+    actor: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    repo = _repo(server)
+    if repo.get_organization(organization_id) is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "organization not found")
+    row = repo.set_registration_review_required(organization_id, body.review_required)
+    server.services.audit_repo.write(
+        actor=actor.username,
+        action="organization.registration_policy.update",
+        target=organization_id,
+        payload=f"review_required={body.review_required}",
     )
     return _organization_payload(row)

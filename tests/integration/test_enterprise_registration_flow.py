@@ -113,3 +113,18 @@ async def test_enterprise_default_model_is_configurable(env):
     assert saved.json()["default_provider_name"] == "enterprise-openai"
     assert saved.json()["default_model"] == "gpt-5"
     assert (await client.get(f"/api/auth/enterprises/{slug}")).status_code == 200
+
+
+async def test_enterprise_registration_can_be_auto_approved(env):
+    client, _, admin_auth = env
+    organization_id, slug = await _create_enterprise(client, admin_auth, "免审企业")
+    policy = await client.put(
+        f"/api/admin/enterprise/organizations/{organization_id}/registration-policy",
+        headers=admin_auth,
+        json={"review_required": False},
+    )
+    assert policy.status_code == 200
+    application_id = await _register(client, slug, "auto-approved-user")
+    assert application_id
+    login = await _enterprise_login(client, slug, "auto-approved-user")
+    assert login.status_code == 200, login.text

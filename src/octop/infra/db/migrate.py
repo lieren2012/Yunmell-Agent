@@ -1913,6 +1913,11 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
         with db.connect() as conn:
             conn.execute("UPDATE _schema_version SET version = ?", (version,))
         return
+    if version == 26:
+        _ensure_registration_review_policy_schema(db)
+        with db.connect() as conn:
+            conn.execute("UPDATE _schema_version SET version = ?", (version,))
+        return
     sql = path.read_text(encoding="utf-8")
     with db.connect() as conn:
         conn.executescript(sql)
@@ -1958,6 +1963,15 @@ def _ensure_enterprise_default_model_schema(db: DatabasePool) -> None:
     """Apply v25 SQLite DDL idempotently for restores and partial upgrades."""
     _ensure_column(db, "organizations", "default_provider_name", "TEXT")
     _ensure_column(db, "organizations", "default_model", "TEXT")
+
+
+def _ensure_registration_review_policy_schema(db: DatabasePool) -> None:
+    _ensure_column(
+        db,
+        "organizations",
+        "registration_review_required",
+        "INTEGER NOT NULL DEFAULT 1",
+    )
 
 
 def run_migrations(db: DatabasePool) -> None:

@@ -55,6 +55,7 @@ export default function EnterprisePage() {
   const [applications, setApplications] = useState<RegistrationApplication[]>([]);
   const [defaultProvider, setDefaultProvider] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
+  const [reviewRequired, setReviewRequired] = useState(true);
   const selectedTeam = useMemo(
     () => teams.find((team) => team.team_id === teamId),
     [teams, teamId],
@@ -68,6 +69,7 @@ export default function EnterprisePage() {
     if (selected) {
       setDefaultProvider(selected.default_provider_name || "");
       setDefaultModel(selected.default_model || "");
+      setReviewRequired(selected.registration_review_required ?? true);
     }
   };
   useEffect(() => {
@@ -330,6 +332,9 @@ export default function EnterprisePage() {
           <Input placeholder="模型 ID，例如 gpt-5" value={defaultModel} onChange={(event) => setDefaultModel(event.target.value)} />
         </Space>
         <Typography.Paragraph type="secondary">审核通过的企业成员会继承此模型；模型不可用时运行请求会明确失败。</Typography.Paragraph>
+      </Card>
+      <Card title="注册审核策略" extra={<Switch checked={reviewRequired} checkedChildren="需要审核" unCheckedChildren="免审" onChange={async (checked) => { setReviewRequired(checked); if (orgId) { await enterpriseApi.saveRegistrationPolicy(orgId, checked); message.success(checked ? "已开启注册审核" : "已关闭注册审核"); } }} />}>
+        <Typography.Paragraph type="secondary">开启时新用户进入待审核列表；关闭时注册申请会自动加入企业并可直接登录。</Typography.Paragraph>
       </Card>
       <Card title="待审核注册申请">
         <List

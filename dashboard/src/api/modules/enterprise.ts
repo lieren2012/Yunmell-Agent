@@ -6,6 +6,7 @@ export interface EnterpriseOrganization {
   login_slug?: string | null;
   default_provider_name?: string | null;
   default_model?: string | null;
+  registration_review_required?: boolean;
 }
 export interface EnterpriseTeam {
   team_id: string;
@@ -64,6 +65,11 @@ export const enterpriseApi = {
     request<EnterpriseOrganization>(
       `/admin/enterprise/organizations/${org}/default-model`,
       json({ provider_name, model }),
+    ),
+  saveRegistrationPolicy: (org: string, review_required: boolean) =>
+    request<EnterpriseOrganization>(
+      `/admin/enterprise/organizations/${org}/registration-policy`,
+      json({ review_required }),
     ),
   teams: (org: string) =>
     request<EnterpriseTeam[]>(`/admin/enterprise/organizations/${org}/teams`),
