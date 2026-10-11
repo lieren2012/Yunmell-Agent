@@ -4,7 +4,6 @@ import {
   Card,
   Col,
   Form,
-  Input,
   InputNumber,
   List,
   Row,
@@ -25,8 +24,15 @@ import {
   type TeamQuota,
   type RegistrationApplication,
 } from "../../../api/modules/enterprise";
+import { request } from "../../../api/request";
 
 const { Text } = Typography;
+
+type AdminProvider = {
+  name: string;
+  models?: Array<{ id?: string; name?: string; enabled?: boolean }>;
+  enabled?: boolean;
+};
 
 export default function EnterprisePage() {
   const [orgs, setOrgs] = useState<EnterpriseOrganization[]>([]);
@@ -34,7 +40,8 @@ export default function EnterprisePage() {
   const [members, setMembers] = useState<EnterpriseMember[]>([]);
   const [orgId, setOrgId] = useState("");
   const [teamId, setTeamId] = useState("");
-  const [modelText, setModelText] = useState("");
+  const [teamDefaultModel, setTeamDefaultModel] = useState("");
+  const [providers, setProviders] = useState<AdminProvider[]>([]);
   const [quota, setQuota] = useState<TeamQuota>({
     team_id: "",
     period: "monthly",
@@ -74,6 +81,9 @@ export default function EnterprisePage() {
   };
   useEffect(() => {
     void loadOrgs().catch(() => message.error("企业列表加载失败"));
+    void request<AdminProvider[]>("/admin/providers")
+      .then(setProviders)
+      .catch(() => message.error("模型列表加载失败"));
   }, []);
   useEffect(() => {
     if (!orgId) return;
@@ -98,10 +108,9 @@ export default function EnterprisePage() {
       enterpriseApi.controls(orgId, teamId),
     ])
       .then(([models, nextQuota, nextControls]) => {
-        setModelText(
-          models
-            .map((item) => `${item.provider_name}/${item.model}`)
-            .join("\n"),
+        const firstModel = models[0];
+        setTeamDefaultModel(
+          firstModel ? `${firstModel.provider_name}/${firstModel.model}` : "",
         );
         if (nextQuota) setQuota(nextQuota);
         if (nextControls) setControls(nextControls);
@@ -111,15 +120,11 @@ export default function EnterprisePage() {
 
   const savePolicies = async () => {
     if (!orgId || !teamId) return;
-    const models = modelText
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((ref) => {
-        const [provider_name, ...rest] = ref.split("/");
-        return { provider_name, model: rest.join("/") };
-      })
-      .filter((item) => item.provider_name && item.model);
+    const [provider_name, ...rest] = teamDefaultModel.split("/");
+    const models =
+      provider_name && rest.length > 0
+        ? [{ provider_name, model: rest.join("/") }]
+        : [];
     await enterpriseApi.saveModels(orgId, teamId, models);
     await enterpriseApi.saveQuota(orgId, teamId, {
       period: quota.period,
@@ -198,13 +203,27 @@ export default function EnterprisePage() {
         </Card>
         <Row gutter={[16, 16]}>
           <Col xs={24} lg={12}>
-            <Card title="团队模型白名单">
-              <Input.TextArea
-                value={modelText}
-                onChange={(event) => setModelText(event.target.value)}
-                placeholder="每行一个 provider/model，例如 openai/gpt-5"
-                autoSize={{ minRows: 8, maxRows: 12 }}
+            <Card title="团队默认模型">
+              <Select
+                showSearch
+                allowClear
+                style={{ width: "100%" }}
+                value={teamDefaultModel || undefined}
+                placeholder="从模型管理中选择默认模型"
+                options={providers.flatMap((provider) =>
+                  (provider.models || [])
+                    .filter((model) => model.enabled !== false && model.id)
+                    .map((model) => ({
+                      value: `${provider.name}/${model.id}`,
+                      label: `${provider.name} / ${model.name || model.id}`,
+                    })),
+                )}
+                onChange={(value) => setTeamDefaultModel(value || "")}
+                notFoundContent="请先在模型管理中添加并启用模型"
               />
+              <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
+                直接复用“模型”管理中的 Provider 和模型。保存后，团队成员默认继承此模型。
+              </Typography.Paragraph>
             </Card>
           </Col>
           <Col xs={24} lg={12}>
@@ -327,10 +346,27 @@ export default function EnterprisePage() {
         </Space>
       </Card>
       <Card title="企业默认模型" extra={<Button type="primary" disabled={!orgId || !defaultProvider || !defaultModel} onClick={async () => { await enterpriseApi.saveDefaultModel(orgId, defaultProvider, defaultModel); await loadOrgs(); message.success("企业默认模型已保存"); }}>保存</Button>}>
-        <Space wrap>
-          <Input placeholder="Provider 名称，例如 openai" value={defaultProvider} onChange={(event) => setDefaultProvider(event.target.value)} />
-          <Input placeholder="模型 ID，例如 gpt-5" value={defaultModel} onChange={(event) => setDefaultModel(event.target.value)} />
-        </Space>
+        <Select
+          showSearch
+          allowClear
+          style={{ width: "100%" }}
+          value={defaultProvider && defaultModel ? `${defaultProvider}/${defaultModel}` : undefined}
+          placeholder="从模型管理中选择企业默认模型"
+          options={providers.flatMap((provider) =>
+            (provider.models || [])
+              .filter((model) => model.enabled !== false && model.id)
+              .map((model) => ({
+                value: `${provider.name}/${model.id}`,
+                label: `${provider.name} / ${model.name || model.id}`,
+              })),
+          )}
+          onChange={(value) => {
+            const [provider, ...model] = (value || "").split("/");
+            setDefaultProvider(provider || "");
+            setDefaultModel(model.join("/"));
+          }}
+          notFoundContent="请先在模型管理中添加并启用模型"
+        />
         <Typography.Paragraph type="secondary">审核通过的企业成员会继承此模型；模型不可用时运行请求会明确失败。</Typography.Paragraph>
       </Card>
       <Card title="注册审核策略" extra={<Switch checked={reviewRequired} checkedChildren="需要审核" unCheckedChildren="免审" onChange={async (checked) => { setReviewRequired(checked); if (orgId) { await enterpriseApi.saveRegistrationPolicy(orgId, checked); message.success(checked ? "已开启注册审核" : "已关闭注册审核"); } }} />}>

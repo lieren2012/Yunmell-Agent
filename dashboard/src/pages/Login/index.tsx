@@ -425,6 +425,16 @@ export default function LoginPage() {
             open={showForgotHelp}
             onClose={() => setShowForgotHelp(false)}
           />
+          <Button
+            type="link"
+            block
+            onClick={() =>
+              navigate(enterpriseSlug ? `/register?enterprise=${encodeURIComponent(enterpriseSlug)}` : "/register")
+            }
+            style={{ padding: 0, height: 32, color: "var(--fn-text-secondary)" }}
+          >
+            {enterpriseSlug ? "没有账号？申请加入企业" : "企业用户注册"}
+          </Button>
         </div>
 
         {providers.length > 0 && (
