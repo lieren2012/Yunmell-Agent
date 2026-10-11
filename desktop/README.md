@@ -74,6 +74,25 @@ otherwise extracts the matching zip shipped with the desktop package (embedded
 in the Windows and Linux binaries, under `Contents/Resources` on macOS). The
 Wails shell never downloads Octop. For local runtime debugging, set
 `OCTOP_DESKTOP_PORTABLE_ZIP=/absolute/path/Octop-portable-<plat>-<version>.zip`.
+
+### Connect the desktop client to a control plane
+
+The desktop application is a local client. It is not deployed as the cloud
+service. A private server or cloud host runs only the Octop control plane
+(login, enterprise administration, policy, model/provider configuration, and
+audit APIs). Enter its address in the desktop tray settings under **Control
+plane URL**. For example:
+
+```text
+https://agent.example.com
+```
+
+Leave the field empty to use the bundled local runtime without a control-plane
+probe. When it is filled, the client probes `<control-plane-url>/api/health`
+and then starts the local bundled runtime; the desktop dashboard, sessions,
+tools and workspace remain local. Use HTTPS for a cloud deployment. The
+`OCTOP_DESKTOP_URL` environment variable remains a development-only override
+for pointing the Wails shell at an already-running Octop instance.
 On later launches, a newer bundled portable version replaces the extracted
 runtime after creating a consistent SQLite backup under `~/.octop/backups/`.
 The upgraded Octop process then applies the normal database migrations during

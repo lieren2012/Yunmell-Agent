@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Octop</title>
+    <title>云迈智能体</title>
     <script>
       document.documentElement.dataset.chrome = /Mac|iPhone|iPad/.test(
         navigator.userAgent,
@@ -236,6 +236,22 @@
         outline: none;
       }
       select:focus {
+        border-color: var(--brand);
+        box-shadow: 0 0 0 3px rgba(232, 93, 117, 0.12);
+      }
+      .text-input {
+        width: 190px;
+        min-width: 0;
+        font: inherit;
+        font-size: 12px;
+        color: var(--text-primary);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 7px 9px;
+        outline: none;
+      }
+      .text-input:focus {
         border-color: var(--brand);
         box-shadow: 0 0 0 3px rgba(232, 93, 117, 0.12);
       }
@@ -488,10 +504,10 @@
         <img
           id="mascot"
           src="/octop-mascot-peek.webp"
-          alt="Octop"
+          alt="云迈智能体"
           draggable="false"
         />
-        <p class="loading-brand" id="loading-brand">Octop</p>
+        <p class="loading-brand" id="loading-brand">云迈智能体</p>
         <p class="loading-hint" id="loading-hint">
           正在检查运行环境，可能需要几分钟。
         </p>
@@ -506,9 +522,25 @@
 
     <div id="settings-panel" class="hidden">
       <div class="wrap">
-        <h1 id="title">Octop 设置</h1>
+        <h1 id="title">云迈智能体设置</h1>
         <p class="subtitle" id="subtitle">桌面端偏好</p>
         <div class="card">
+          <div class="row">
+            <div>
+              <div class="label" id="l-control-plane">控制面地址</div>
+              <small id="h-control-plane"
+                >填写服务器地址；留空使用本机内置运行时，修改后重启客户端</small
+              >
+            </div>
+            <input
+              class="text-input"
+              id="control-plane-url"
+              type="url"
+              placeholder="留空 = 本机"
+              spellcheck="false"
+              autocomplete="url"
+            />
+          </div>
           <div class="row">
             <div>
               <div class="label" id="l-lang">语言 / Language</div>
@@ -555,7 +587,7 @@
           </div>
         </div>
         <div class="actions">
-          <button class="primary" id="show-main">显示 Octop</button>
+          <button class="primary" id="show-main">显示云迈智能体</button>
           <button class="ghost" id="quit">退出</button>
         </div>
         <p class="status hidden" id="settings-status"></p>
@@ -568,8 +600,11 @@
         zh: {
           statusWait: "正在启动，请稍候…",
           loadingHint: "正在检查运行环境，可能需要几分钟。",
-          title: "Octop 设置",
+          title: "云迈智能体设置",
           subtitle: "桌面端偏好",
+          controlPlane: "控制面地址",
+          controlPlaneH: "填写服务器地址；留空使用本机内置运行时，修改后重启客户端",
+          controlPlanePlaceholder: "留空 = 本机",
           lang: "语言",
           langH: "选择偏好语言 / Choose your preferred language",
           auto: "开机启动",
@@ -578,7 +613,7 @@
           trayH: "点击最小化时隐藏窗口并保留在系统托盘",
           sleep: "防止系统休眠",
           sleepH: "应用运行期间阻止系统自动休眠",
-          showMain: "显示 Octop",
+          showMain: "显示云迈智能体",
           quit: "退出",
           winGroup: "窗口控制",
           winMin: "最小化",
@@ -588,8 +623,11 @@
         en: {
           statusWait: "Starting, please wait…",
           loadingHint: "Checking the runtime. This may take a few minutes.",
-          title: "Octop Settings",
+          title: "Yunmell-Agent Settings",
           subtitle: "Desktop preferences",
+          controlPlane: "Control plane URL",
+          controlPlaneH: "Use the server address; leave empty for the bundled local runtime. Restart after changing it.",
+          controlPlanePlaceholder: "Empty = local",
           lang: "Language",
           langH: "Choose your preferred language",
           auto: "Launch at login",
@@ -598,7 +636,7 @@
           trayH: "Hide the window on minimize and keep Octop in the tray",
           sleep: "Prevent system sleep",
           sleepH: "Keeps the system awake while Octop is running",
-          showMain: "Show Octop",
+          showMain: "Show Yunmell-Agent",
           quit: "Quit",
           winGroup: "Window controls",
           winMin: "Minimize",
@@ -624,6 +662,10 @@
         const t = copy[locale] || copy.en;
         document.getElementById("title").textContent = t.title;
         document.getElementById("subtitle").textContent = t.subtitle;
+        document.getElementById("l-control-plane").textContent = t.controlPlane;
+        document.getElementById("h-control-plane").textContent = t.controlPlaneH;
+        document.getElementById("control-plane-url").placeholder =
+          t.controlPlanePlaceholder;
         document.getElementById("l-lang").textContent = t.lang;
         document.getElementById("h-lang").textContent = t.langH;
         document.getElementById("l-auto").textContent = t.auto;
@@ -687,6 +729,7 @@
 
       function current() {
         return {
+          controlPlaneUrl: document.getElementById("control-plane-url").value,
           locale: document.getElementById("locale").value,
           autostart: document.getElementById("autostart").checked,
           minimizeToTray: document.getElementById("tray").checked,
@@ -735,11 +778,19 @@
         document.getElementById("loading-panel").classList.add("hidden");
         document.getElementById("settings-panel").classList.remove("hidden");
         document.getElementById("locale").value = locale;
+        document.getElementById("control-plane-url").value =
+          s.controlPlaneUrl || "";
         document.getElementById("autostart").checked = !!s.autostart;
         document.getElementById("tray").checked = s.minimizeToTray !== false;
         document.getElementById("sleep").checked = !!s.preventSleep;
 
-        for (const id of ["locale", "autostart", "tray", "sleep"]) {
+        for (const id of [
+          "control-plane-url",
+          "locale",
+          "autostart",
+          "tray",
+          "sleep",
+        ]) {
           document.getElementById(id).addEventListener("change", persist);
         }
         document

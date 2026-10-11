@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -161,16 +162,27 @@ func (a *App) boot() {
 	if a.store != nil {
 		locale = a.store.get().Locale
 	}
-	if url := os.Getenv("OCTOP_DESKTOP_URL"); url != "" {
+	// OCTOP_DESKTOP_URL is retained for the development shell, where Wails is
+	// intentionally pointed at an already-running Octop instance. A packaged
+	// desktop release uses ControlPlaneURL only as the management-service
+	// connection; the message/runtime dashboard remains local.
+	if devURL := strings.TrimSpace(os.Getenv("OCTOP_DESKTOP_URL")); devURL != "" {
 		a.setStatus(desktopText(locale, copyStatusConnecting))
-		if err := waitHealth(locale, url, 60*time.Second); err != nil {
+		if err := waitHealth(locale, devURL, 60*time.Second); err != nil {
 			a.setStatus(err.Error())
 			return
 		}
-		a.showDashboard(url)
+		a.showDashboard(devURL)
 		return
 	}
 	s := a.store.get()
+	if controlPlaneURL := strings.TrimSpace(s.ControlPlaneURL); controlPlaneURL != "" {
+		a.setStatus(desktopText(locale, copyStatusConnecting))
+		if err := waitHealth(locale, controlPlaneURL, 60*time.Second); err != nil {
+			a.setStatus(err.Error())
+			return
+		}
+	}
 	a.setStatus(desktopText(locale, copyStatusCheckingRuntime))
 	if err := ensurePortable(locale, a.setStatus); err != nil {
 		a.setStatus(err.Error())

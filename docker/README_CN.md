@@ -1,4 +1,6 @@
-# Octop Docker 部署
+# 云迈智能体控制面 Docker 部署
+
+本目录部署的是企业管理/登录控制面，不是 Windows、macOS 或 Linux 桌面客户端。桌面端由 GitHub Release 的安装包交付，在用户电脑本地运行消息、会话和工具。
 
 ---
 
@@ -17,6 +19,15 @@
 | `docker-entrypoint.sh` | 容器入口：首次初始化数据库并启动服务 |
 
 ### 快速开始
+
+控制面生产配置可先复制示例：
+
+```bash
+cp docker/control-plane.env.example .env.deploy
+# 编辑 .env.deploy，替换初始管理员密码和数据目录
+docker compose --env-file .env.deploy -f docker/docker-compose.yml up -d --build
+curl -fsS http://127.0.0.1:6602/api/health
+```
 
 **方式一：Compose（推荐）**
 

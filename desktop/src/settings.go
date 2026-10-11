@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -22,6 +25,9 @@ type Settings struct {
 	MinimizeToTray bool   `json:"minimizeToTray"`
 	PreventSleep   bool   `json:"preventSleep"`
 	Port           int    `json:"port,omitempty"`
+	// ControlPlaneURL selects the remote management/login service. Empty means
+	// the desktop starts and uses its bundled local runtime.
+	ControlPlaneURL string `json:"controlPlaneUrl,omitempty"`
 }
 
 func defaultSettings() Settings {
@@ -93,6 +99,11 @@ func (st *settingsStore) save(next Settings) error {
 	if next.Port == 0 {
 		next.Port = 8088
 	}
+	normalized, err := normalizeControlPlaneURL(next.ControlPlaneURL)
+	if err != nil {
+		return err
+	}
+	next.ControlPlaneURL = normalized
 	if err := os.MkdirAll(octopHome(), 0o755); err != nil {
 		return err
 	}
@@ -105,6 +116,21 @@ func (st *settingsStore) save(next Settings) error {
 	}
 	st.cur = next
 	return nil
+}
+
+func normalizeControlPlaneURL(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", fmt.Errorf("control plane URL must be an http(s) URL")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
 func greenPlat() string {
