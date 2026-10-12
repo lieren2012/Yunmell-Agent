@@ -580,6 +580,7 @@ func TestFormatHealthWaitErrorUsesServiceNotReadyHintOn5xx(t *testing.T) {
 func TestWaitHealthSucceedsOnOK(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"db":true}`))
 	}))
 	t.Cleanup(srv.Close)
 	if err := waitHealth(LocaleZH, srv.URL, time.Second); err != nil {

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +32,9 @@ type App struct {
 	settingsWindow *application.WebviewWindow
 	updateWindow   *application.WebviewWindow
 	updater        *clientUpdater
+	bootMu         sync.Mutex
+	startupMu      sync.Mutex
+	startup        StartupStatus
 	store          *settingsStore
 	sleep          *sleepGuard
 	cmd            *exec.Cmd
@@ -154,6 +159,7 @@ func jsonString(s string) string {
 }
 
 func (a *App) setStatus(msg string) {
+	a.updateStartup(func(s *StartupStatus) { s.Message = msg })
 	if a.app == nil {
 		return
 	}
@@ -161,6 +167,12 @@ func (a *App) setStatus(msg string) {
 }
 
 func (a *App) boot() {
+	if !a.bootMu.TryLock() {
+		return
+	}
+	defer a.bootMu.Unlock()
+	a.updateStartup(func(s *StartupStatus) { *s = StartupStatus{Busy: true, Phase: "control-plane"} })
+	defer a.updateStartup(func(s *StartupStatus) { s.Busy = false })
 	locale := LocaleEN
 	if a.store != nil {
 		locale = a.store.get().Locale
@@ -170,9 +182,14 @@ func (a *App) boot() {
 	// desktop release uses ControlPlaneURL only as the management-service
 	// connection; the message/runtime dashboard remains local.
 	if devURL := strings.TrimSpace(os.Getenv("OCTOP_DESKTOP_URL")); devURL != "" {
+		parsed, err := url.Parse(devURL)
+		if err != nil || (parsed.Hostname() != "localhost" && (net.ParseIP(parsed.Hostname()) == nil || !net.ParseIP(parsed.Hostname()).IsLoopback())) {
+			a.startupFailed("OCTOP_DESKTOP_URL 仅可指向本机开发工作台。企业管理地址请填写在控制面设置中。")
+			return
+		}
 		a.setStatus(desktopText(locale, copyStatusConnecting))
 		if err := waitHealth(locale, devURL, 60*time.Second); err != nil {
-			a.setStatus(err.Error())
+			a.startupFailed(err.Error())
 			return
 		}
 		a.showDashboard(devURL)
@@ -180,15 +197,39 @@ func (a *App) boot() {
 	}
 	s := a.store.get()
 	if controlPlaneURL := strings.TrimSpace(s.ControlPlaneURL); controlPlaneURL != "" {
-		a.setStatus(desktopText(locale, copyStatusConnecting))
-		if err := waitHealth(locale, controlPlaneURL, 60*time.Second); err != nil {
-			a.setStatus(err.Error())
+		a.setStatus("正在检查企业管理端连接…")
+		health, err := waitStartupHealth(locale, controlPlaneURL, "control-plane", 8*time.Second)
+		a.updateStartup(func(state *StartupStatus) { state.ControlPlane = health })
+		if err != nil {
+			a.startupFailed(err.Error())
 			return
 		}
 	}
+	a.updateStartup(func(state *StartupStatus) { state.Phase = "local-runtime" })
+	base := dashboardURL(s.Port)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	existing := probeStartupHealth(ctx, base, "local-runtime")
+	cancel()
+	a.updateStartup(func(state *StartupStatus) { state.LocalRuntime = existing })
+	if existing.Ready {
+		a.mu.Lock()
+		owned := a.cmd != nil
+		a.mu.Unlock()
+		if !owned {
+			a.startupFailed(fmt.Sprintf("企业管理端检查通过；本机端口 %d 已有旧版或独立运行时。请关闭旧云迈客户端后重试，不要删除数据目录。", s.Port))
+			return
+		}
+		a.updateStartup(func(state *StartupStatus) { state.LocalRuntime = existing; state.Phase = "ready" })
+		a.showDashboard(base)
+		return
+	}
+	if existing.HTTPStatus != 0 {
+		a.startupFailed(fmt.Sprintf("本机端口 %d 已有服务，但健康响应不符合云迈运行时协议：%s。请检查端口占用。", s.Port, existing.Detail))
+		return
+	}
 	a.setStatus(desktopText(locale, copyStatusCheckingRuntime))
 	if err := ensurePortable(locale, a.setStatus); err != nil {
-		a.setStatus(err.Error())
+		a.startupFailed(err.Error())
 		return
 	}
 	root := portableDir()
@@ -198,15 +239,17 @@ func (a *App) boot() {
 	a.cmd = cmd
 	a.mu.Unlock()
 	if err != nil {
-		a.setStatus(err.Error())
+		a.startupFailed(err.Error())
 		return
 	}
-	base := dashboardURL(s.Port)
 	a.setStatus(desktopText(locale, copyStatusStartingService))
-	if err := waitHealth(locale, base, 2*time.Minute); err != nil {
-		a.setStatus(err.Error())
+	health, err := waitStartupHealth(locale, base, "local-runtime", 45*time.Second)
+	a.updateStartup(func(state *StartupStatus) { state.LocalRuntime = health })
+	if err != nil {
+		a.startupFailed(err.Error())
 		return
 	}
+	a.updateStartup(func(state *StartupStatus) { state.Phase = "ready" })
 	a.showDashboard(base)
 }
 
@@ -302,6 +345,9 @@ func (a *App) requestQuit() {
 }
 
 func main() {
+	if handleStartupDiagnosis() {
+		return
+	}
 	if handleClientUpdateCommand() {
 		return
 	}

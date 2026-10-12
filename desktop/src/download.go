@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -349,26 +348,8 @@ func unzipGreenFiles(files []*zip.File, dest string) error {
 }
 
 func waitHealth(locale Locale, base string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	url := strings.TrimRight(base, "/") + "/api/health"
-	var lastErr error
-	var lastStatus int
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(url)
-		if err == nil {
-			lastStatus = resp.StatusCode
-			lastErr = nil
-			resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 500 {
-				return nil
-			}
-		} else {
-			lastErr = err
-			lastStatus = 0
-		}
-		time.Sleep(400 * time.Millisecond)
-	}
-	return formatHealthWaitError(locale, base, timeout, lastErr, lastStatus)
+	_, err := waitStartupHealth(locale, base, "local-runtime", timeout)
+	return err
 }
 
 func formatWaitDuration(locale Locale, d time.Duration) string {

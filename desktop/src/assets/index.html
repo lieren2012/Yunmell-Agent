@@ -516,6 +516,12 @@
             <span class="loading-bar-fill"></span>
           </div>
           <p class="loading-status" id="status">正在启动，请稍候…</p>
+          <div class="actions" id="startup-actions">
+            <button id="retry-startup" type="button">重试启动</button>
+            <button id="startup-settings" type="button">连接设置</button>
+            <button id="startup-updates" type="button">客户端更新</button>
+          </div>
+          <pre id="startup-details" style="white-space:pre-wrap;text-align:left;font-size:12px;color:var(--text-tertiary);width:100%"></pre>
         </div>
       </div>
     </div>
@@ -770,6 +776,24 @@
       const settingsMode =
         new URLSearchParams(window.location.search).get("settings") === "1";
       const s = await call("GetSettingsStatus");
+      function renderStartup(state) {
+        if (state.message) document.getElementById("status").textContent = state.message;
+        document.getElementById("retry-startup").disabled = !!state.busy;
+        document.getElementById("loading-panel").classList.toggle("is-error", state.phase === "error");
+        const lines = [];
+        for (const [name, health] of [["企业管理端",state.controlPlane],["本机运行时",state.localRuntime]]) {
+          if (!health?.target) continue;
+          lines.push(`${name}：${health.target}\n${health.route === "direct" ? "直连" : "环境代理"} · HTTP ${health.httpStatus || "尚未响应"} · ${health.detail}`);
+        }
+        document.getElementById("startup-details").textContent = lines.join("\n\n");
+      }
+      document.getElementById("retry-startup").onclick = async () => {
+        try { await call("RetryStartup"); } catch (error) { document.getElementById("status").textContent = String(error); }
+      };
+      document.getElementById("startup-settings").onclick = () => call("ShowConnectionSettings");
+      document.getElementById("startup-updates").onclick = () => call("ShowClientUpdates");
+      Events.On("desktop:startup", () => { void call("GetStartupStatus").then(renderStartup); });
+      void call("GetStartupStatus").then(renderStartup);
       document.getElementById("client-updates").addEventListener("click", () => call("ShowClientUpdates"));
       const locale = s.locale || "en";
       document.getElementById("status").textContent =
