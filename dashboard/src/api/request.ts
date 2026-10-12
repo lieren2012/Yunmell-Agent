@@ -123,7 +123,9 @@ function handleSetupRequired(): void {
   if (
     path.startsWith("/setup") ||
     path.startsWith("/login") ||
-    path.startsWith("/invite")
+    path.startsWith("/invite") ||
+    path.startsWith("/register") ||
+    path.startsWith("/connection")
   ) {
     return;
   }
@@ -134,7 +136,9 @@ function handleSetupRequired(): void {
 
 /** Wizard endpoints stay reachable while lockdown is active. */
 function isSetupApiPath(path: string): boolean {
-  return path === "/setup/status" || path.startsWith("/setup/");
+  return path === "/setup/status" || path.startsWith("/setup/") ||
+    path === "/auth/connection" || path === "/auth/deployment" ||
+    path.startsWith("/auth/deployment/");
 }
 
 /**
@@ -312,7 +316,9 @@ function handleUnauthorized(): void {
   if (
     path.startsWith("/setup") ||
     path.startsWith("/login") ||
-    path.startsWith("/invite")
+    path.startsWith("/invite") ||
+    path.startsWith("/register") ||
+    path.startsWith("/connection")
   )
     return;
   _redirectingToLogin = true;

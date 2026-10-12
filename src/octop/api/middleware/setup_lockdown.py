@@ -33,7 +33,9 @@ def install(app: Any, server: Any) -> None:
             open_exact.extend(("/api/docs", "/api/openapi.json"))
         if path in open_exact or any(path.startswith(p) for p in _OPEN_PREFIXES):
             return await call_next(request)
-        if server.user_manager is None or server.user_manager.count() == 0:
+        from octop.infra.deployment.connection import desktop_mode
+
+        if not desktop_mode() and (server.user_manager is None or server.user_manager.count() == 0):
             return JSONResponse(
                 status_code=503,
                 content={"setup_required": True},

@@ -23,6 +23,7 @@ import {
  */
 
 export interface AuthStatus {
+  connection_required?: boolean;
   /** True when no admin exists yet — UI must redirect to /setup. */
   setup_required: boolean;
   /** Legacy alias of ``!setup_required`` kept for compat. */
@@ -48,6 +49,7 @@ export interface SsoIdentity {
 }
 
 export interface OctopUser {
+  deployment?: { name: string; model_error?: string | null };
   id: number;
   username: string;
   /** Role-template public id: admin | user | custom ULID. */
@@ -109,6 +111,7 @@ export interface SetupBody {
 }
 
 interface RawSetupStatus {
+  connection_required?: boolean;
   setup_required: boolean;
   wizard_password_required?: boolean;
   wizard_password_exists?: boolean;
@@ -159,6 +162,7 @@ export const authApi = {
           wizard_password_path: raw.wizard_password_path,
           database_bound: raw.database_bound ?? false,
           database_driver: raw.database_driver ?? null,
+          connection_required: raw.connection_required ?? false,
         };
         return applySetupFlags(value);
       } finally {
@@ -195,6 +199,7 @@ export const authApi = {
     enterpriseSlug?: string,
   ): Promise<LoginResponse> => {
     const raw = await request<RawLoginResponse>("/auth/login", {
+      signal: AbortSignal.timeout(12000),
       method: "POST",
       body: JSON.stringify(
         captchaToken

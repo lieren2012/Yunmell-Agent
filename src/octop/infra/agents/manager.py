@@ -489,7 +489,7 @@ class AgentManager:
     def teams(self) -> Any:
         return self._teams
 
-    async def boot(self) -> None:
+    async def boot(self, *, start_existing: bool = True) -> None:
         self._tool_guard_rules.ensure_seeded()
         providers = self._providers.build_harness_configs()
         self._harness_manager = HarnessAgentManager(
@@ -509,6 +509,8 @@ class AgentManager:
             self._install_team_host_dispatch()
             self._harness_manager.set_security_policy(self._security.harness_policy())
 
+        if not start_existing:
+            return
         rows = self._repos.agent_repo.list_all(include_disabled=False)
         for row in rows:
             if row.last_state == "stopped":
@@ -601,6 +603,22 @@ class AgentManager:
         workspace_initializer: Callable[[AgentRow, Any], Awaitable[None]] | None = None,
     ) -> AgentRow:
         """Create a new agent, persist to DB, and register with harness."""
+        from octop.infra.deployment.connection import desktop_mode, management_address
+
+        if desktop_mode() and management_address() and spec.user_id is not None and not spec.default_model:
+            from octop.infra.db.repos.deployment import DeploymentRepo
+            from octop.infra.deployment.desktop import MODEL
+
+            if DeploymentRepo(self._repos.db).identity_authority(spec.user_id):
+                managed_ref = f"yunmell-managed-{spec.user_id}/{MODEL}"
+                user_row = self._repos.user_repo.get(spec.user_id)
+                can_switch = user_row is not None and "providers" in user_row.permissions
+                if not spec.default_model:
+                    spec.default_model = managed_ref
+                elif spec.default_model != managed_ref and not can_switch:
+                    raise OctopError(ErrorCode.FORBIDDEN, "该角色只能使用企业默认模型", status=403)
+                elif spec.default_model != managed_ref and not self._repos.enterprise_repo.model_allowed_for_user(spec.user_id, spec.default_model):
+                    raise OctopError(ErrorCode.FORBIDDEN, "所选模型未获企业授权", status=403)
         async with self._lock:
             self._assert_agent_name_available(spec.user_id, spec.name)
             if spec.agent_id:

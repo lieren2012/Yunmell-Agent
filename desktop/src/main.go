@@ -62,6 +62,7 @@ func (a *App) ServiceShutdown() error {
 }
 
 func (a *App) GetSettings() Settings {
+	_ = a.store.reload()
 	return a.store.get()
 }
 

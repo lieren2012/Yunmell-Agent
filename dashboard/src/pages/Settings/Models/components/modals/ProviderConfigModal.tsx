@@ -95,7 +95,7 @@ export function ProviderConfigModal({
   const [form] = Form.useForm<ProviderConfigForm>();
   const [draftModels, setDraftModels] = useState<ProviderModel[]>([]);
 
-  const hasApiKey = !!provider.api_key && provider.api_key.length > 0;
+  const hasApiKey = !!provider.api_key_configured || (!!provider.api_key && provider.api_key.length > 0);
   const isOllama = isOllamaProviderRow(provider);
   const isOnnx = isOnnxProviderRow(provider);
   const [downloadedIds, setDownloadedIds] = useState<string[]>([]);
@@ -808,8 +808,8 @@ export function ProviderConfigModal({
         !!draftApiKey ||
         (!!draftBaseUrl && draftBaseUrl !== (provider.base_url ?? ""));
 
-      if (useDraft && !draftApiKey && !hasApiKey) {
-        message.warning(t("models.pleaseEnterApiKey"));
+      if (useDraft && !draftApiKey) {
+        message.warning(t("models.changedAddressNeedsKey", "修改连接地址后，请输入新密钥再测试，或先保存配置。"));
         return;
       }
 
@@ -821,7 +821,7 @@ export function ProviderConfigModal({
           ? await testProviderDraft({
               name: provider.name,
               kind: provider.kind,
-              api_key: draftApiKey || provider.api_key || undefined,
+              api_key: draftApiKey || undefined,
               base_url: draftBaseUrl || provider.base_url,
               model_id: modelId,
               embedding,
@@ -903,16 +903,21 @@ export function ProviderConfigModal({
       }
       const draftApiKey = (values.api_key as string | undefined)?.trim();
       const draftBaseUrl = (values.base_url as string | undefined)?.trim();
-      const apiKey = draftApiKey || provider.api_key || "";
-      if (!apiKey) {
+      const apiKey = draftApiKey || "";
+      if (!apiKey && !hasApiKey) {
         message.warning(t("models.pleaseEnterApiKey"));
         return;
       }
 
+      if (!apiKey && (draftBaseUrl || "") !== (provider.base_url || "")) {
+        message.warning(t("models.changedAddressNeedsKey", "修改连接地址后，请输入新密钥再测试，或先保存配置。"));
+        return;
+      }
       setFetchingModels(true);
       const result = await fetchProviderModels({
         kind: "openai",
-        api_key: apiKey,
+        api_key: apiKey || undefined,
+        provider_id: apiKey ? undefined : provider.id,
         base_url: draftBaseUrl || provider.base_url,
         name: provider.name,
       });

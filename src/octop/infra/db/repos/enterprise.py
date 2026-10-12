@@ -20,6 +20,7 @@ class OrganizationRow:
     default_provider_name: str | None = None
     default_model: str | None = None
     registration_review_required: bool = True
+    registration_open: bool = True
 
     @classmethod
     def from_row(cls, row: DbRow) -> OrganizationRow:
@@ -38,6 +39,7 @@ class OrganizationRow:
             bool(row["registration_review_required"])
             if "registration_review_required" in keys
             else True,
+            bool(row["registration_open"]) if "registration_open" in keys else True,
         )
 
 
@@ -210,10 +212,10 @@ class EnterpriseRepo:
             ).fetchone()
         return OrganizationRow.from_row(row) if row else None
 
-    def list_teams(self, organization_id: str) -> list[TeamRow]:
+    def list_teams(self, organization_id: str, *, include_archived: bool = False) -> list[TeamRow]:
         with self._db.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM teams WHERE organization_id = ? ORDER BY name, id",
+                "SELECT * FROM teams WHERE organization_id = ?" + ("" if include_archived else " AND archived = 0") + " ORDER BY name, id",
                 (organization_id,),
             ).fetchall()
         return map_rows(rows, TeamRow)

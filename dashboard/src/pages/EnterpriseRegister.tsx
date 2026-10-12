@@ -1,41 +1,56 @@
-import { useState } from "react";
-import { Button, Card, Input, Space, Typography, message } from "antd";
-import { useSearchParams } from "react-router-dom";
-import { request } from "../api/request";
+import { useEffect, useRef, useState } from "react";
+import { Alert, Button, Card, Form, Input, Space, Typography } from "antd";
+import { useNavigate } from "react-router-dom";
+import { deploymentApi, enrollmentError, type DeploymentInfo, type RegistrationStatus } from "../api/modules/deployment";
 
 export default function EnterpriseRegisterPage() {
-  const [params] = useSearchParams();
-  const querySlug = params.get("enterprise") || "";
-  const [slug, setSlug] = useState(querySlug);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [email, setEmail] = useState("");
-  const [submitted, setSubmitted] = useState(false);
-
-  const submit = async () => {
-    if (!slug || !username || !password) return;
-    await request(`/auth/enterprises/${encodeURIComponent(slug)}/register`, {
-      method: "POST",
-      body: JSON.stringify({ username, password, display_name: displayName || undefined, email: email || undefined }),
-    });
-    setSubmitted(true);
-    message.success("注册申请已提交，请等待企业管理员审核");
+  const navigate = useNavigate();
+  const [form] = Form.useForm();
+  const [info, setInfo] = useState<DeploymentInfo | null>(null);
+  const [address, setAddress] = useState("");
+  const [status, setStatus] = useState<RegistrationStatus>({ status: "none" });
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const inFlight = useRef(false);
+  const load = async () => {
+    setLoading(true); setError("");
+    try {
+      const [enterprise, connection, receipt] = await Promise.all([deploymentApi.info(), deploymentApi.connection(), deploymentApi.status()]);
+      setInfo(enterprise); setAddress(connection.address || window.location.origin); setStatus(receipt);
+    } catch (err) { setError(enrollmentError(err)); }
+    finally { setLoading(false); }
   };
-
-  return (
-    <Space direction="vertical" style={{ width: "100%", maxWidth: 480, margin: "10vh auto", display: "flex" }}>
-      <Typography.Title level={2}>云迈智能体</Typography.Title>
-      <Card title={submitted ? "申请已提交" : slug ? `加入企业 ${slug}` : "企业注册"}>
-        {submitted ? <Typography.Text>审核通过后，你才能使用该企业地址登录工作台。</Typography.Text> : <Space direction="vertical" style={{ width: "100%" }}>
-          {!querySlug && <Input placeholder="企业地址代码" value={slug} onChange={(e) => setSlug(e.target.value.trim())} />}
-          <Input placeholder="账号" value={username} onChange={(e) => setUsername(e.target.value)} />
-          <Input.Password placeholder="密码（至少 8 位）" value={password} onChange={(e) => setPassword(e.target.value)} />
-          <Input placeholder="姓名" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-          <Input placeholder="邮箱（可选）" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <Button type="primary" onClick={() => void submit()} disabled={!slug || !username || !password}>提交注册申请</Button>
-        </Space>}
-      </Card>
-    </Space>
-  );
+  useEffect(() => { void load(); }, []);
+  const submit = async (values: { username: string; password: string; display_name?: string; email?: string }) => {
+    if (inFlight.current) return;
+    inFlight.current = true; setSubmitting(true); setError("");
+    try {
+      const result = await deploymentApi.register({ ...values, username: values.username.trim() });
+      form.setFieldValue("password", ""); setStatus(result);
+    } catch (err) { setError(enrollmentError(err)); }
+    finally { inFlight.current = false; setSubmitting(false); }
+  };
+  const messages = { pending: "申请已提交，正在等待管理员审核。审核通过后即可登录。", approved: "注册已通过，你现在可以返回登录。", rejected: "申请已被驳回，请联系管理员。", needs_info: "管理员要求补充资料，请联系管理员后再次查看状态。", none: "" };
+  return <Space direction="vertical" style={{ width: "100%", maxWidth: 480, margin: "8vh auto", display: "flex" }}>
+    <Typography.Title level={2}>云迈智能体</Typography.Title>
+    <Card title={info ? `加入 ${info.name}` : "企业用户注册"} loading={loading}>
+      <Space direction="vertical" style={{ width: "100%" }}>
+        {address && <Typography.Text type="secondary">服务地址：{address}</Typography.Text>}
+        {error && <Alert type="error" message={error} showIcon role="alert" />}
+        {status.status !== "none" ? <>
+          <Alert type={status.status === "approved" ? "success" : status.status === "rejected" ? "error" : "info"} message={messages[status.status]} description={status.review_note || undefined} showIcon role="status" />
+          <Button onClick={() => void load()}>刷新审核状态</Button>
+        </> : info && !info.registration_open ? <Alert type="warning" message="该企业暂未开放注册，请联系管理员。" showIcon /> : info && <Form form={form} layout="vertical" onFinish={values => void submit(values)} disabled={submitting} style={{ width: "100%" }}>
+          <Form.Item name="username" label="账号" rules={[{ required: true, whitespace: true, message: "请填写账号" }, { max: 64 }]}><Input autoComplete="username" /></Form.Item>
+          <Form.Item name="password" label="密码" rules={[{ required: true, message: "请填写密码" }, { min: 8, max: 200, message: "密码长度为 8–200 位" }, { pattern: /^(?=.*[A-Za-z])(?=.*\d).+$/, message: "密码必须同时包含字母和数字" }]}><Input.Password autoComplete="new-password" /></Form.Item>
+          <Form.Item name="display_name" label="姓名" rules={[{ max: 128 }]}><Input /></Form.Item>
+          <Form.Item name="email" label="邮箱（可选）" rules={[{ type: "email", message: "请填写有效邮箱" }, { max: 254 }]}><Input /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={submitting}>{submitting ? "正在提交…" : info.review_required ? "提交注册申请" : "注册账号"}</Button>
+        </Form>}
+        {error && <Button onClick={() => void load()}>重新连接</Button>}
+      </Space>
+    </Card>
+    <Space><Button onClick={() => navigate("/login", { replace: true })}>返回登录</Button><Button onClick={() => navigate("/connection", { replace: true })}>更换服务地址</Button></Space>
+  </Space>;
 }

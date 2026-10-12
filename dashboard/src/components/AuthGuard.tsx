@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Spin } from "antd";
+import { Alert, Spin } from "antd";
 import { clearAuthToken, getAuthToken } from "../api/request";
 import { authApi, type OctopUser } from "../api/modules/auth";
 import { applyUserLocale } from "../utils/locale";
@@ -52,6 +52,11 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       setOffline(false);
       try {
         const status = await authApi.getAuthStatus();
+        if (status.connection_required) {
+          clearAuthToken();
+          if (!cancelled) navigateRef.current("/connection", { replace: true });
+          return;
+        }
 
         // No admin yet → push to setup wizard; drop any leftover JWT from a
         // previous install so background prefetch cannot stampede lockdown.
@@ -144,6 +149,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
 
   return (
     <CurrentUserProvider user={user} setUser={setUser}>
+      {user?.deployment?.model_error && <Alert type="warning" message={user.deployment.model_error} showIcon />}
       {children}
     </CurrentUserProvider>
   );

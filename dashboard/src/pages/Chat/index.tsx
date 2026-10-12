@@ -1388,7 +1388,7 @@ function ChatPageInner() {
                   noAgents={noAgents}
                   loading={agentsLoading}
                 />
-              ) : showWelcome && modelsReady && availableModels.length === 0 ? (
+              ) : showWelcome && canConfigureModels && modelsReady && availableModels.length === 0 ? (
                 <ModelConfigEmpty canConfigure={canConfigureModels} />
               ) : showWelcome ? (
                 <WelcomeScreen
@@ -1659,7 +1659,7 @@ function ChatPageInner() {
                 </div>
               </div>
             ) : null}
-            {!showWelcome && modelsReady && availableModels.length === 0 ? (
+            {!showWelcome && canConfigureModels && modelsReady && availableModels.length === 0 ? (
               <div className={styles.modelConfigDock}>
                 <div className={styles.modelConfigDockInner}>
                   <Alert

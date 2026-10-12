@@ -418,7 +418,11 @@ async def review_registration_application(
     except ValueError as exc:
         raise OctopError(ErrorCode.SLASH_BAD_ARGS, str(exc), status=400) from exc
     if body.status == "approved":
-        repo.upsert_member(organization_id, row.user_id, None, "member")
+        existing = next((item for item in repo.list_members(organization_id) if item.user_id == row.user_id), None)
+        team_id = existing.team_id if existing else None
+        if team_id is None and server.services.settings_repo.get("yunmell.deployment.organization") == organization_id:
+            team_id = server.services.settings_repo.get("yunmell.deployment.team")
+        repo.upsert_member(organization_id, row.user_id, team_id, existing.role if existing else "member")
     server.services.audit_repo.write(
         actor=actor.username,
         action=f"enterprise.registration.{body.status}",
@@ -442,7 +446,7 @@ async def review_registration_application(
 async def set_enterprise_default_model(
     organization_id: str,
     body: DefaultModelBody,
-    actor: User = Depends(require_permission("users")),
+    actor: User = Depends(require_permission("providers")),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     repo = _repo(server)

@@ -30,6 +30,8 @@ async def test_admin_creates_provider(env):
     body = r.json()
     assert body["name"] == "openai"
     assert "user_id" not in body
+    assert body["api_key"] is None
+    assert body["api_key_configured"] is True
 
 
 async def test_regular_user_cannot_create_provider(env):

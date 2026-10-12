@@ -25,6 +25,8 @@ func startOctop(root string, port int) (*exec.Cmd, error) {
 	cmd := exec.Command(py, launch, "run", "--host", "127.0.0.1", "--port", strconv.Itoa(port))
 	cmd.Dir = root
 	mustEnv(cmd, map[string]string{
+		"OCTOP_DESKTOP_CLIENT": "1",
+		"OCTOP_CONTROL_PLANE_URL": loadSettings().ControlPlaneURL,
 		"OCTOP_HOME":           octopHome(),
 		"OCTOP_GREEN_PACKAGES": filepath.Join(root, "packages"),
 		"PYTHONNOUSERSITE":     "1",

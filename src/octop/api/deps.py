@@ -30,6 +30,8 @@ _SLIDING_RENEW_REMAINING_FRACTION = 1 / 3
 
 # Paths that bypass JWT middleware (setup wizard, health, login).
 _JWT_EXEMPT_PREFIXES = (
+    "/api/desktop-model/",
+    "/api/auth/deployment/",
     "/api/setup/",
     "/api/health/",
     "/api/i18n/",
@@ -38,6 +40,8 @@ _JWT_EXEMPT_PREFIXES = (
     "/api/auth/enterprises/",
 )
 _JWT_EXEMPT_EXACT = (
+    "/api/auth/deployment",
+    "/api/auth/connection",
     "/api/health",
     "/api/auth/login",
     "/api/auth/captcha",
@@ -117,6 +121,16 @@ def resolve_user_from_token(server: OctopServer, token: str) -> User:
     user = server.user_manager.get_by_id(int(payload["sub"]))
     if user is None:
         raise OctopError(ErrorCode.USER_DISABLED, "user not active")
+    # Desktop identities are passwordless local projections.  Their local JWT
+    # must carry the encrypted remote-session generation, otherwise a token
+    # from before logout/address change could continue to authorize local APIs.
+    from octop.infra.db.repos.deployment import DeploymentRepo
+    from octop.infra.deployment.connection import desktop_mode
+
+    if desktop_mode() and DeploymentRepo(server.services.db).identity_authority(user.id):
+        from octop.infra.deployment.desktop import bridge
+
+        bridge(server).assert_local_session(user.id, payload)
     return user
 
 
@@ -136,6 +150,13 @@ def maybe_sliding_renew_token(server: OctopServer, token: str, user: User) -> st
     secret = server.services.secret_repo.get("jwt")
     if secret is None:
         raise OctopError(ErrorCode.INTERNAL_ERROR, "jwt secret missing")
+    from octop.infra.db.repos.deployment import DeploymentRepo
+    from octop.infra.deployment.connection import desktop_mode
+
+    if desktop_mode() and DeploymentRepo(server.services.db).identity_authority(user.id):
+        from octop.infra.deployment.desktop import bridge
+
+        return bridge(server).issue_local_token(user)
     return sign_token(
         secret,
         sub=user.id,

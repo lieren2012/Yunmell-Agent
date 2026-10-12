@@ -206,7 +206,7 @@ export function ModelListEditor({
       message.warning(t("models.modelIdLabel"));
       return;
     }
-    if (!(canTest ?? !!provider.api_key)) {
+    if (!(canTest ?? (!!provider.api_key_configured || !!provider.api_key))) {
       message.warning(t("models.testRequiresAuth"));
       return;
     }
