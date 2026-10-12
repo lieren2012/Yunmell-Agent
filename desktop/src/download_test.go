@@ -552,10 +552,10 @@ func TestFormatHealthWaitErrorIsActionableChinese(t *testing.T) {
 func TestFormatHealthWaitErrorUsesEnglishWhenLocaleIsEn(t *testing.T) {
 	msg := formatHealthWaitError(LocaleEN, "http://127.0.0.1:8088", time.Minute, errors.New("connection refused"), 0).Error()
 	for _, needle := range []string{
-		"Yunmell-Agent did not become ready within",
+		"Yunmell Agent did not become ready within",
 		"1 minute",
 		"http://127.0.0.1:8088",
-		"make sure Yunmell-Agent is running",
+		"make sure Yunmell Agent is running",
 	} {
 		if !strings.Contains(msg, needle) {
 			t.Fatalf("English health error missing %q: %s", needle, msg)
@@ -596,7 +596,7 @@ func TestWaitHealthTimesOutWithFriendlyMessage(t *testing.T) {
 	if strings.Contains(err.Error(), "did not become healthy") {
 		t.Fatalf("should not use the old English diagnostic: %s", err)
 	}
-	if !strings.Contains(err.Error(), "Yunmell-Agent did not become ready within") {
+	if !strings.Contains(err.Error(), "Yunmell Agent did not become ready within") {
 		t.Fatalf("timeout should follow the desktop locale: %s", err)
 	}
 }
