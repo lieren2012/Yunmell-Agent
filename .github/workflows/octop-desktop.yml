@@ -316,7 +316,15 @@ jobs:
       - name: Upload bundled desktop package
         uses: actions/upload-artifact@v7
         with:
-          path: desktop/src/bin/Yunmell-Agent-desktop-${{ matrix.plat }}-${{ env.OCTOP_VERSION }}.*
+          path: desktop/src/bin/Yunmell-Agent-desktop-${{ matrix.plat }}-${{ env.OCTOP_VERSION }}.${{ runner.os == 'Windows' && 'exe' || runner.os == 'macOS' && 'dmg' || 'tar.gz' }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload client checksum
+        uses: actions/upload-artifact@v7
+        with:
+          path: desktop/src/bin/Yunmell-Agent-desktop-${{ matrix.plat }}-${{ env.OCTOP_VERSION }}.*.sha256
           archive: false
           if-no-files-found: error
           retention-days: 14
