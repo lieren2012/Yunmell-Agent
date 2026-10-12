@@ -11,7 +11,7 @@ info:
   description: "云迈智能体桌面客户端"
   copyright: "(c) 2026, Yunmell"
   comments: "云迈智能体桌面客户端"
-  version: "1.0.10b9"
+  version: "1.0.10b10"
 
 dev_mode:
   root_path: .

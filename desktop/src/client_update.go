@@ -18,7 +18,7 @@ import (
 )
 
 // This is the shell version, independent of the Python runtime and upstream baseline.
-const clientVersion = "1.0.10b9"
+const clientVersion = "1.0.10b10"
 const defaultUpdateRepository = "lieren2012/Yunmell-Agent"
 
 type ClientUpdateStatus struct {
