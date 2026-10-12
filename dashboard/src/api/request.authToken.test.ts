@@ -82,4 +82,23 @@ describe("auth token remember / session-only", () => {
       { previous: "member-token", next: "", reason: "clear" },
     ]);
   });
+
+  it("marks sliding renewal separately from an account replacement", () => {
+    const events: CustomEvent[] = [];
+    const onChange = (event: Event) => events.push(event as CustomEvent);
+    window.addEventListener(mod.AUTH_TOKEN_CHANGED_EVENT, onChange);
+
+    mod.setAuthToken("admin-token");
+    const response = new Response(null, {
+      headers: { "X-Octop-Access-Token": "renewed-admin-token" },
+    });
+    mod.applyRenewedAccessToken(response);
+
+    window.removeEventListener(mod.AUTH_TOKEN_CHANGED_EVENT, onChange);
+    expect(events.at(-1)?.detail).toEqual({
+      previous: "admin-token",
+      next: "renewed-admin-token",
+      reason: "renew",
+    });
+  });
 });

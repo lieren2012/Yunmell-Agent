@@ -150,7 +150,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       // active streams. Fresh login happens on the public route, while a
       // clear (logout/401) must force the normal gate re-check here.
       const reason = (event as CustomEvent<{ reason?: string }>).detail?.reason;
-      if (reason === "set") return;
+      if (reason === "renew") return;
       setUser(null);
       setAuthed(false);
       setChecking(true);

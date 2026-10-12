@@ -13,13 +13,14 @@ export const AUTH_TOKEN_STORAGE_KEY = AUTH_TOKEN_KEY;
  * 401, or a token replacement happens in this document as well.
  */
 export const AUTH_TOKEN_CHANGED_EVENT = "octop:auth-token-changed";
+export type AuthTokenChangeReason = "set" | "renew" | "clear";
 /** sessionStorage handoff for SSO redirects / popups (default = remember). */
 const AUTH_REMEMBER_PREF_KEY = "auth_remember_pref";
 
 function notifyAuthTokenChanged(
   previous: string,
   next: string,
-  reason: "set" | "clear",
+  reason: AuthTokenChangeReason,
 ): void {
   if (typeof window === "undefined" || previous === next) return;
   window.dispatchEvent(
@@ -94,7 +95,11 @@ export function isSessionOnlyAuth(): boolean {
  * ``sessionStorage`` (cleared when the tab/window closes). SSO popups must
  * post the token back to the opener — ``sessionStorage`` is not shared.
  */
-export function setAuthToken(token: string, remember: boolean = true) {
+export function setAuthToken(
+  token: string,
+  remember: boolean = true,
+  reason: Exclude<AuthTokenChangeReason, "clear"> = "set",
+) {
   const previous = getAuthToken();
   if (remember) {
     localStorage.setItem(AUTH_TOKEN_KEY, token);
@@ -104,7 +109,7 @@ export function setAuthToken(token: string, remember: boolean = true) {
     localStorage.removeItem(AUTH_TOKEN_KEY);
   }
   clearSetupRequired();
-  notifyAuthTokenChanged(previous, token, "set");
+  notifyAuthTokenChanged(previous, token, reason);
 }
 
 /** Get JWT token from localStorage or (session-only) sessionStorage. */
@@ -131,7 +136,7 @@ export function clearAuthToken() {
 export function applyRenewedAccessToken(response: Response): void {
   const renewed = response.headers.get(ACCESS_TOKEN_RESPONSE_HEADER);
   if (renewed) {
-    setAuthToken(renewed, !isSessionOnlyAuth());
+    setAuthToken(renewed, !isSessionOnlyAuth(), "renew");
   }
 }
 
