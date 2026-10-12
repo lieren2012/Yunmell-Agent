@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,7 +18,7 @@ import (
 )
 
 // This is the shell version, independent of the Python runtime and upstream baseline.
-const clientVersion = "1.0.10b4"
+const clientVersion = "1.0.10b5"
 const defaultUpdateRepository = "lieren2012/Yunmell-Agent"
 
 type ClientUpdateStatus struct {
@@ -134,6 +135,10 @@ func (u *clientUpdater) begin(stage string) error {
 }
 
 func (u *clientUpdater) get(raw string) (*http.Response, error) {
+	return u.getRange(context.Background(), raw, "")
+}
+
+func (u *clientUpdater) getRange(ctx context.Context, raw, rangeHeader string) (*http.Response, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return nil, err
@@ -141,11 +146,14 @@ func (u *clientUpdater) get(raw string) (*http.Response, error) {
 	if err = trustedUpdateURL(parsed); err != nil {
 		return nil, err
 	}
-	request, err := http.NewRequest(http.MethodGet, raw, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
 		return nil, err
 	}
 	request.Header.Set("User-Agent", "Yunmell-Agent/"+clientVersion)
+	if rangeHeader != "" {
+		request.Header.Set("Range", rangeHeader)
+	}
 	client := u.client
 	if parsed.Hostname() == "api.github.com" || strings.HasSuffix(parsed.Path, ".sha256") {
 		copy := *client
@@ -156,7 +164,7 @@ func (u *clientUpdater) get(raw string) (*http.Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot reach the client update source: %w", err)
 	}
-	if resp.StatusCode != http.StatusOK {
+	if (rangeHeader == "" && resp.StatusCode != http.StatusOK) || (rangeHeader != "" && resp.StatusCode != http.StatusPartialContent) {
 		resp.Body.Close()
 		return nil, fmt.Errorf("client update source returned HTTP %d", resp.StatusCode)
 	}
@@ -344,6 +352,19 @@ func (u *clientUpdater) downloadAsset() error {
 	}
 	part := f.Name()
 	defer os.Remove(part)
+	if asset.Size >= 8<<20 {
+		if err := u.downloadRanges(f, asset); err != nil {
+			f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+		if err := verifyUpdateFile(part, asset); err != nil {
+			return err
+		}
+		return u.finishDownload(part, asset)
+	}
 	resp, err := u.get(asset.URL)
 	if err != nil {
 		f.Close()
@@ -390,19 +411,84 @@ func (u *clientUpdater) downloadAsset() error {
 	if total != asset.Size || hex.EncodeToString(h.Sum(nil)) != expected {
 		return fmt.Errorf("installer integrity check failed; the installed client was not changed")
 	}
+	return u.finishDownload(part, asset)
+}
+
+func (u *clientUpdater) finishDownload(part string, asset clientReleaseAsset) error {
 	final := filepath.Join(u.directory, asset.Name)
 	// Re-downloads replace only a previous verified installer, never the running app.
-	if err = os.Remove(final); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(final); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err = os.Rename(part, final); err != nil {
+	if err := os.Rename(part, final); err != nil {
 		return err
 	}
 	u.mu.Lock()
 	u.path = final
 	u.mu.Unlock()
-	u.publish(func(s *ClientUpdateStatus) { s.Stage = "ready"; s.Downloaded = total })
+	u.publish(func(s *ClientUpdateStatus) { s.Stage = "ready"; s.Downloaded = asset.Size })
 	return nil
+}
+
+// GitHub supports byte ranges. Bounded concurrency prevents a slow CDN
+// connection from stretching a large client update into an hours-long download.
+func (u *clientUpdater) downloadRanges(file *os.File, asset clientReleaseAsset) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	const chunk = int64(4 << 20)
+	jobs := make(chan int64, (asset.Size+chunk-1)/chunk)
+	for offset := int64(0); offset < asset.Size; offset += chunk {
+		jobs <- offset
+	}
+	close(jobs)
+	errors := make(chan error, 1)
+	var group sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for offset := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				length := min(chunk, asset.Size-offset)
+				resp, err := u.getRange(ctx, asset.URL, fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
+				if err == nil {
+					expectedRange := fmt.Sprintf("bytes %d-%d/%d", offset, offset+length-1, asset.Size)
+					if resp.Header.Get("Content-Range") != expectedRange {
+						err = fmt.Errorf("installer range does not match release metadata")
+					}
+					if err == nil {
+						var body []byte
+						body, err = io.ReadAll(io.LimitReader(resp.Body, length+1))
+						if err == nil && int64(len(body)) != length {
+							err = fmt.Errorf("installer range download was incomplete")
+						}
+						if err == nil {
+							_, err = file.WriteAt(body, offset)
+						}
+					}
+					resp.Body.Close()
+				}
+				if err != nil {
+					select {
+					case errors <- err:
+					default:
+					}
+					cancel()
+					return
+				}
+				u.publish(func(s *ClientUpdateStatus) { s.Downloaded += length })
+			}
+		}()
+	}
+	group.Wait()
+	select {
+	case err := <-errors:
+		return err
+	default:
+		return file.Sync()
+	}
 }
 
 func (a *App) GetClientUpdateStatus() ClientUpdateStatus { return a.updater.snapshot() }
@@ -419,7 +505,8 @@ func (a *App) DownloadClientUpdate() error { go func() { _ = a.updater.download(
 func (a *App) ShowClientUpdates() {
 	if a.updateWindow != nil {
 		a.updateWindow.Show()
-		a.updateWindow.Focus()
+		// Hidden windows initialise WebView2 on their first Show. Focusing before
+		// the controller is ready can terminate the application on Windows.
 	}
 }
 func (a *App) HideClientUpdates() {

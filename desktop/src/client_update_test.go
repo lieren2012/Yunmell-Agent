@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -136,5 +138,34 @@ func TestClientUpdaterRejectsDowngrades(t *testing.T) {
 	}
 	if err := u.download(); err == nil {
 		t.Fatal("older release must not be downloaded for installation")
+	}
+}
+
+func TestParallelInstallerDownloadChecksRangesAndHash(t *testing.T) {
+	body := bytes.Repeat([]byte("yunmell"), (9<<20)/7)
+	asset := testUpdateAsset(body)
+	u := testUpdater(t, []clientRelease{{Tag: "v1.0.11", Assets: []clientReleaseAsset{asset}}}, nil)
+	u.client.Transport = updateTransport(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Host == "api.github.com" {
+			data, _ := json.Marshal([]clientRelease{{Tag: "v1.0.11", Assets: []clientReleaseAsset{asset}}})
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(data)), Header: make(http.Header)}, nil
+		}
+		var start, end int
+		if _, err := fmt.Sscanf(request.Header.Get("Range"), "bytes=%d-%d", &start, &end); err != nil {
+			return nil, err
+		}
+		return &http.Response{StatusCode: 206, Body: io.NopCloser(bytes.NewReader(body[start : end+1])), Header: http.Header{"Content-Range": {fmt.Sprintf("bytes %d-%d/%d", start, end, len(body))}}}, nil
+	})
+	if err := u.check(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.download(); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyUpdateFile(u.path, asset); err != nil {
+		t.Fatal(err)
+	}
+	if u.snapshot().Downloaded != asset.Size {
+		t.Fatal("progress must cover the complete installer")
 	}
 }
