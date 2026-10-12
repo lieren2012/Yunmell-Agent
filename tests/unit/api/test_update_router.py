@@ -46,6 +46,7 @@ async def test_update_status_reprobes_after_cache_ttl(
         return payload
 
     monkeypatch.setattr(update_router, "_build_status", fake_build)
+    monkeypatch.setattr(update_router, "_channel_current_version", lambda channel: "1.0.0")
 
     server = _settings_server()
     first = await update_router.update_status(_=None, server=server)
@@ -443,7 +444,7 @@ async def test_status_stable_only_ignores_prerelease(
 ) -> None:
     info = self_update.PyPIInfo(version="0.9.34b1", latest_stable="0.9.33", source="pypi.org")
     monkeypatch.setattr(update_router, "fetch_pypi_info", lambda: info)
-    monkeypatch.setattr(update_router, "get_local_version", lambda: "0.9.32")
+    monkeypatch.setattr(update_router, "_channel_current_version", lambda channel: "0.9.32")
 
     auto = await update_router.update_status(_=None, server=_settings_server(True))
     assert auto["latest_version"] == "0.9.33"
@@ -468,7 +469,7 @@ async def test_status_includes_prerelease_when_stable_only_off(
         description="## [0.9.34b1] - 2026-09-01\n\n- beta notes\n\n## [0.9.33]\n- old\n",
     )
     monkeypatch.setattr(update_router, "fetch_pypi_info", lambda: info)
-    monkeypatch.setattr(update_router, "get_local_version", lambda: "0.9.33")
+    monkeypatch.setattr(update_router, "_channel_current_version", lambda channel: "0.9.33")
 
     auto = await update_router.update_status(_=None, server=_settings_server(False))
     assert auto["latest_version"] == "0.9.34b1"
@@ -484,7 +485,7 @@ async def test_patch_settings_remaps_cached_status(
 ) -> None:
     info = self_update.PyPIInfo(version="0.9.34b1", latest_stable="0.9.33", source="pypi.org")
     monkeypatch.setattr(update_router, "fetch_pypi_info", lambda: info)
-    monkeypatch.setattr(update_router, "get_local_version", lambda: "0.9.33")
+    monkeypatch.setattr(update_router, "_channel_current_version", lambda channel: "0.9.33")
     server = _settings_server(True)
 
     first = await update_router.update_status(_=None, server=server)

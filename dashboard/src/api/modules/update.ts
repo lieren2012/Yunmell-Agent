@@ -36,7 +36,9 @@ export interface UpdateChannelStatus {
   source_url: string | null;
   error: string | null;
   last_check_time: string | null;
-  upgrade_mode: "in_place" | "release";
+  stable_only: boolean;
+  baseline_commit: string | null;
+  upgrade_mode: "upstream_sync" | "release";
 }
 
 export interface UpgradeStarted {
@@ -62,10 +64,17 @@ export interface RestartResponse {
 
 export const updateApi = {
   getChannelStatuses: () =>
-    request<Record<UpdateChannel, UpdateChannelStatus>>("/update/channels/status"),
+    request<Record<UpdateChannel, UpdateChannelStatus>>(
+      "/update/channels/status",
+    ),
   checkChannel: (channel: UpdateChannel) =>
     request<UpdateChannelStatus>(`/update/channels/${channel}/check`, {
       method: "POST",
+    }),
+  patchChannelSettings: (channel: UpdateChannel, stableOnly: boolean) =>
+    request<UpdateChannelStatus>(`/update/channels/${channel}/settings`, {
+      method: "PATCH",
+      body: JSON.stringify({ stable_only: stableOnly }),
     }),
   upgradeChannel: (channel: UpdateChannel, version?: string | null) =>
     request<{

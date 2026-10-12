@@ -1,643 +1,222 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useEffect, useState } from "react";
 import { App, Collapse, Switch } from "antd";
-import {
-  BookOpen,
-  CheckCircle,
-  Info,
-  RefreshCw,
-  XCircle,
-  AlertTriangle,
-  Power,
-  Sparkles,
-} from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Info, RefreshCw, Sparkles, XCircle } from "lucide-react";
 import {
   updateApi,
-  UpdateStatus,
-  UpdateChannelStatus,
-  UpgradeProgress,
+  type UpdateChannel,
+  type UpdateChannelStatus,
 } from "../../../api/modules/update";
 import Markdown from "../../../components/Markdown/LazyMarkdown";
-import { useServiceRestartContext } from "../../../context/ServiceRestartContext";
-import {
-  clearStoredUpdateStatus,
-  storeUpdateStatus,
-} from "../../../utils/updateStatusCache";
 import { TabPanelHeader } from "./TabPanelHeader";
 import styles from "./UpdateConfig.module.less";
 
-/** Shell snippets shown in the manual upgrade guide (commands are locale-agnostic). */
-const UPGRADE_GUIDE_CODE = {
-  installerUnix: `curl -fsSL https://finnie-1258344699.cos.ap-guangzhou.myqcloud.com/octop/install.sh | bash`,
-  installerWin: `irm https://finnie-1258344699.cos.ap-guangzhou.myqcloud.com/octop/install.ps1 | iex`,
-  cli: `octop update
-# or non-interactive:
-octop update --yes
-# pre-release (beta) requires --allow-prerelease:
-# octop update --allow-prerelease --yes`,
-  pip: `pip install -U octop
-# optional extras, e.g. browser automation:
-# pip install -U "octop[browser]"`,
-  source: `cd Octop
-git pull
-make build-frontend
-# or: cd dashboard && npm ci && npm run build && cd ..
-pip install -e .
-# with dev deps: make install  /  pip install -e ".[dev]"`,
-  docker: `# Compose (from repo root; rebuild + recreate)
-docker compose -f docker/docker-compose.yml up -d --build
+const titles = { official: "OpenOct/Octop 官方更新", yunmell: "云迈自研更新" };
 
-# or rebuild the image then run with a persistent data volume
-bash docker/docker_build.sh
-docker run -d \\
-  --name octop \\
-  -p 8088:8088 \\
-  -v octop-data:/data/.octop \\
-  -e HOME=/data \\
-  octop:latest`,
-  restart: `# system service (systemd / launchd / Windows service)
-octop service restart
+function ChannelPanel({
+  channel,
+  initial,
+}: {
+  channel: UpdateChannel;
+  initial?: UpdateChannelStatus;
+}) {
+  const { message } = App.useApp();
+  const [status, setStatus] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const official = channel === "official";
+  useEffect(() => {
+    if (initial) setStatus(initial);
+  }, [initial]);
 
-# foreground process — stop the old process, then:
-octop run`,
-} as const;
-
-type GuideMethodKey =
-  | "ui"
-  | "installer"
-  | "cli"
-  | "pip"
-  | "source"
-  | "docker"
-  | "restart";
-
-const GUIDE_METHOD_ORDER: GuideMethodKey[] = [
-  "ui",
-  "installer",
-  "cli",
-  "pip",
-  "source",
-  "docker",
-  "restart",
-];
-
-function codeFor(key: GuideMethodKey): string | null {
-  switch (key) {
-    case "installer":
-      return [
-        `# macOS / Linux`,
-        UPGRADE_GUIDE_CODE.installerUnix,
-        ``,
-        `# Windows (PowerShell)`,
-        UPGRADE_GUIDE_CODE.installerWin,
-      ].join("\n");
-    case "cli":
-      return UPGRADE_GUIDE_CODE.cli;
-    case "pip":
-      return UPGRADE_GUIDE_CODE.pip;
-    case "source":
-      return UPGRADE_GUIDE_CODE.source;
-    case "docker":
-      return UPGRADE_GUIDE_CODE.docker;
-    case "restart":
-      return UPGRADE_GUIDE_CODE.restart;
-    default:
-      return null;
+  async function check(stableOnly?: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      const next =
+        stableOnly === undefined
+          ? await updateApi.checkChannel(channel)
+          : await updateApi.patchChannelSettings(channel, stableOnly);
+      setStatus(next);
+    } catch {
+      setError(`${titles[channel]}检查失败，请稍后重试`);
+    } finally {
+      setBusy(false);
+    }
   }
-}
 
-function UpgradeGuide() {
-  const { t } = useTranslation();
+  async function openRelease() {
+    try {
+      const result = await updateApi.upgradeChannel(
+        channel,
+        status?.latest_version,
+      );
+      if (result.source_url)
+        window.open(result.source_url, "_blank", "noopener,noreferrer");
+    } catch {
+      void message.error(`${titles[channel]}来源无法打开`);
+    }
+  }
 
   return (
-    <section
-      className={`${styles.panel} ${styles.guide}`}
-      aria-label={t("advancedSettings.update.guideTitle")}
-    >
+    <section className={styles.panel} aria-label={titles[channel]}>
       <div className={styles.panelTitleRow}>
         <span className={styles.panelTitleIcon}>
-          <BookOpen size={16} />
+          <Sparkles size={16} />
         </span>
-        <h3 className={styles.panelTitle}>
-          {t("advancedSettings.update.guideTitle")}
-        </h3>
+        <h3 className={styles.panelTitle}>{titles[channel]}</h3>
       </div>
       <p className={styles.panelDesc}>
-        {t("advancedSettings.update.guideIntro")}
+        {official
+          ? "当前版本表示云迈已集成的官方基线；上游同步通过适配和测试后更新。"
+          : "云迈智能体的产品版本，更新来源为云迈 GitHub Release。"}
       </p>
-      <p className={styles.guideNote}>
-        {t("advancedSettings.update.guideDataNote")}
-      </p>
-      <div className={styles.guideMethods}>
-        {GUIDE_METHOD_ORDER.map((key) => {
-          const code = codeFor(key);
-          return (
-            <div key={key} className={styles.guideMethod}>
-              <p className={styles.guideMethodTitle}>
-                {t(`advancedSettings.update.guide.${key}.title`)}
-              </p>
-              <p className={styles.guideMethodBody}>
-                {t(`advancedSettings.update.guide.${key}.body`)}
-              </p>
-              {code && <pre className={styles.guideCode}>{code}</pre>}
-            </div>
-          );
-        })}
+      <div className={styles.stableOnlyRow}>
+        <Switch
+          aria-label={`${titles[channel]}只检查稳定版`}
+          checked={status?.stable_only !== false}
+          onChange={(value) => void check(value)}
+          disabled={busy}
+        />
+        <div className={styles.stableOnlyCopy}>
+          <p className={styles.stableOnlyLabel}>只检查稳定版</p>
+          <p className={styles.stableOnlyHint}>
+            关闭后包含测试版。此设置仅影响本条更新线。
+          </p>
+        </div>
       </div>
+      <div className={styles.versionGrid}>
+        <div className={styles.versionCard}>
+          <span className={styles.versionLabel}>
+            {official ? "已集成官方版本" : "云迈当前版本"}
+          </span>
+          <span className={styles.versionValue}>
+            {status?.current_version ?? "—"}
+          </span>
+        </div>
+        <div className={styles.versionCard}>
+          <span className={styles.versionLabel}>
+            {official ? "官方最新版本" : "云迈最新版本"}
+          </span>
+          <span className={styles.versionValue}>
+            {status?.latest_version ?? "尚未检查"}
+          </span>
+          <div className={styles.versionBadges}>
+            {status?.latest_is_prerelease && (
+              <span className={styles.betaBadge}>测试版</span>
+            )}
+            {status?.has_update && (
+              <span className={styles.badge}>有新版本</span>
+            )}
+            {status?.latest_version && !status.has_update && !status.error && (
+              <span className={styles.badge}>已是最新版本</span>
+            )}
+          </div>
+        </div>
+      </div>
+      {(error || status?.error) && (
+        <div role="alert" className={`${styles.alert} ${styles.alertError}`}>
+          <XCircle size={15} />
+          <span>
+            {error ||
+              (official
+                ? "官方更新源暂时无法访问，请重试。"
+                : "云迈 Release 暂时无法访问，请重试。")}
+          </span>
+        </div>
+      )}
+      <div className={`${styles.alert} ${styles.alertInfo}`}>
+        <Info size={15} />
+        <span>
+          来源：
+          <a
+            href={
+              status?.source_url ||
+              (official
+                ? "https://github.com/TencentCloud/Octop/releases"
+                : "https://github.com/lieren2012/Yunmell-Agent/releases")
+            }
+            target="_blank"
+            rel="noreferrer"
+          >
+            {status?.source ||
+              (official ? "Octop 官方 / PyPI" : "云迈 GitHub Release")}
+          </a>
+        </span>
+      </div>
+      <div className={styles.actions}>
+        <button
+          type="button"
+          className={styles.btnSecondary}
+          onClick={() => void check()}
+          disabled={busy}
+        >
+          <RefreshCw size={14} className={busy ? styles.spinning : undefined} />
+          {busy ? "检查中" : official ? "检查官方更新" : "检查云迈更新"}
+        </button>
+        <button
+          type="button"
+          className={styles.btnSecondary}
+          onClick={() => void openRelease()}
+          disabled={!status?.latest_version || !!status?.error}
+        >
+          {official ? "查看官方更新与同步" : "下载 / 安装云迈新版"}
+        </button>
+      </div>
+      {status?.release_notes && (
+        <Collapse
+          className={styles.releaseNotes}
+          items={[
+            {
+              key: `${channel}-notes`,
+              label: official ? "官方更新说明" : "云迈更新说明",
+              children: <Markdown content={status.release_notes} />,
+            },
+          ]}
+        />
+      )}
     </section>
   );
 }
 
 export default function UpdateConfig() {
   const { t } = useTranslation();
-  const { modal } = App.useApp();
-  const [status, setStatus] = useState<UpdateStatus | null>(null);
-  const [yunmellStatus, setYunmellStatus] = useState<UpdateChannelStatus | null>(null);
-  const [yunmellChecking, setYunmellChecking] = useState(false);
-  const [savingStableOnly, setSavingStableOnly] = useState(false);
-  const [checking, setChecking] = useState(false);
-  const [upgrading, setUpgrading] = useState(false);
-  const [progress, setProgress] = useState<UpgradeProgress | null>(null);
-  const { restartPhase, isRestarting, requestRestart, executeRestart } =
-    useServiceRestartContext();
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pollFailRef = useRef(0);
-  const autoRestartedRef = useRef(false);
-
+  const [statuses, setStatuses] = useState<
+    Partial<Record<UpdateChannel, UpdateChannelStatus>>
+  >({});
   useEffect(() => {
-    updateApi
-      .getUpdateStatus()
+    let cancelled = false;
+    void updateApi
+      .getChannelStatuses()
       .then((next) => {
-        storeUpdateStatus(next);
-        setStatus(next);
+        if (!cancelled) setStatuses(next);
       })
       .catch(() => {});
-    updateApi
-      .getChannelStatuses()
-      .then((next) => setYunmellStatus(next.yunmell))
-      .catch(() => {});
     return () => {
-      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+      cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (progress?.status !== "complete" || !status?.desktop) return;
-    if (restartPhase !== "idle" || autoRestartedRef.current) return;
-    autoRestartedRef.current = true;
-    void executeRestart();
-  }, [progress?.status, status?.desktop, restartPhase, executeRestart]);
-
-  const handleCheck = useCallback(async () => {
-    setChecking(true);
-    try {
-      const result = await updateApi.checkForUpdates();
-      setStatus(result);
-      updateApi.checkChannel("official").catch(() => {});
-    } catch {
-      // network error – keep existing status
-    } finally {
-      setChecking(false);
-    }
-  }, []);
-
-  const handleYunmellCheck = useCallback(async () => {
-    setYunmellChecking(true);
-    try {
-      setYunmellStatus(await updateApi.checkChannel("yunmell"));
-    } finally {
-      setYunmellChecking(false);
-    }
-  }, []);
-
-  const handleYunmellUpgrade = useCallback(async () => {
-    if (!yunmellStatus?.latest_version) return;
-    const result = await updateApi.upgradeChannel("yunmell", yunmellStatus.latest_version);
-    if (result.source_url) window.open(result.source_url, "_blank", "noopener,noreferrer");
-  }, [yunmellStatus]);
-
-  const pollProgress = useCallback(async (taskId: string) => {
-    try {
-      const prog = await updateApi.getUpgradeProgress(taskId);
-      pollFailRef.current = 0;
-      setProgress(prog);
-      if (prog.status === "running") {
-        pollTimerRef.current = setTimeout(() => pollProgress(taskId), 800);
-      } else {
-        setUpgrading(false);
-        if (prog.status === "complete") {
-          clearStoredUpdateStatus();
-          updateApi
-            .getUpdateStatus()
-            .then((next) => {
-              storeUpdateStatus(next);
-              setStatus(next);
-            })
-            .catch(() => {});
-        }
-      }
-    } catch (err: unknown) {
-      pollFailRef.current += 1;
-      if (pollFailRef.current < 5) {
-        pollTimerRef.current = setTimeout(() => pollProgress(taskId), 800);
-        return;
-      }
-      setUpgrading(false);
-      const message = err instanceof Error ? err.message : String(err);
-      setProgress({
-        task_id: taskId,
-        status: "error",
-        stage: "error",
-        percent: null,
-        new_version: null,
-        success: false,
-        error: message,
-        mirror_errors: null,
-      });
-    }
-  }, []);
-
-  const handleStableOnlyChange = useCallback(async (checked: boolean) => {
-    setSavingStableOnly(true);
-    try {
-      const next = await updateApi.patchSettings(checked);
-      storeUpdateStatus(next);
-      setStatus(next);
-    } catch {
-      // keep current switch state from last successful status
-    } finally {
-      setSavingStableOnly(false);
-    }
-  }, []);
-
-  const runUpgrade = useCallback(async () => {
-    setUpgrading(true);
-    setProgress(null);
-    pollFailRef.current = 0;
-    autoRestartedRef.current = false;
-    try {
-      const started = await updateApi.triggerUpgrade(status?.latest_version);
-      setProgress({
-        task_id: started.task_id,
-        status: "running",
-        stage: "starting",
-        percent: 0,
-        new_version: null,
-        success: null,
-        error: null,
-        mirror_errors: null,
-      });
-      pollProgress(started.task_id);
-    } catch (err: unknown) {
-      setUpgrading(false);
-      const msg = err instanceof Error ? err.message : String(err);
-      setProgress({
-        task_id: "",
-        status: "error",
-        stage: null,
-        percent: null,
-        new_version: null,
-        success: false,
-        error: msg,
-        mirror_errors: null,
-      });
-    }
-  }, [pollProgress, status?.latest_version]);
-
-  const handleUpgrade = useCallback(() => {
-    if (status?.latest_is_prerelease) {
-      modal.confirm({
-        title: t("advancedSettings.update.prereleaseConfirmTitle"),
-        content: t("advancedSettings.update.prereleaseConfirmBody", {
-          version: status.latest_version,
-        }),
-        okText: t("advancedSettings.update.upgradeButton"),
-        cancelText: t("advancedSettings.update.prereleaseConfirmCancel"),
-        onOk: () => runUpgrade(),
-      });
-      return;
-    }
-    void runUpgrade();
-  }, [modal, runUpgrade, status, t]);
-
-  const stageLabel = (stage: string | null) => {
-    switch (stage) {
-      case "starting":
-        return t("advancedSettings.update.stageStarting");
-      case "downloading":
-        return t("advancedSettings.update.stageDownloading");
-      case "installing":
-        return t("advancedSettings.update.stageInstalling");
-      default:
-        return t("advancedSettings.update.upgrading");
-    }
-  };
-
-  const upgradeFinished =
-    progress && (progress.status === "complete" || progress.status === "error");
-  const isServiceMode = !!status?.service_mode;
-  const restartUiLocked = restartPhase !== "idle" && restartPhase !== "timeout";
-
   return (
     <div className={styles.container}>
       <TabPanelHeader
         icon={<RefreshCw size={22} />}
         title={t("advancedSettings.update.title")}
-        description={t("advancedSettings.update.description")}
+        description="官方基线与云迈产品版本分别检查和更新"
       />
-
       <div className={styles.layout}>
-        {/* In-place version check & upgrade */}
-        <section
-          className={styles.panel}
-          aria-label={t("advancedSettings.update.panelTitle")}
-        >
-          <div className={styles.panelTitleRow}>
-            <span className={styles.panelTitleIcon}>
-              <Sparkles size={16} />
-            </span>
-            <h3 className={styles.panelTitle}>OpenOct/Octop 官方更新</h3>
-          </div>
-          <p className={styles.panelDesc}>官方 PyPI 版本线，和云迈自研 Release 独立检查、比较和升级。</p>
-
-          <div className={styles.stableOnlyRow}>
-            <Switch
-              checked={status?.stable_only !== false}
-              onChange={(checked) => void handleStableOnlyChange(checked)}
-              disabled={savingStableOnly || checking || upgrading}
-            />
-            <div className={styles.stableOnlyCopy}>
-              <p className={styles.stableOnlyLabel}>
-                {t("advancedSettings.update.stableOnlyLabel")}
-              </p>
-              <p className={styles.stableOnlyHint}>
-                {t("advancedSettings.update.stableOnlyHint")}
-              </p>
-            </div>
-          </div>
-
-          <div className={styles.versionGrid}>
-            <div className={styles.versionCard}>
-              <span className={styles.versionLabel}>
-                {t("advancedSettings.update.currentVersion")}
-              </span>
-              <span className={styles.versionValue}>
-                {status?.current_version ?? "—"}
-              </span>
-            </div>
-            <div className={styles.versionCard}>
-              <span className={styles.versionLabel}>
-                {t("advancedSettings.update.latestVersion")}
-              </span>
-              <span className={styles.versionValue}>
-                {status?.latest_version ?? (
-                  <span className={styles.notChecked}>
-                    {t("advancedSettings.update.notChecked")}
-                  </span>
-                )}
-              </span>
-              <div className={styles.versionBadges}>
-                {status?.latest_is_prerelease && status?.latest_version && (
-                  <span className={styles.betaBadge}>
-                    {t("advancedSettings.update.prereleaseBadge")}
-                  </span>
-                )}
-                {status?.has_update && (
-                  <span className={styles.badge}>
-                    {t("advancedSettings.update.updateAvailable")}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {status?.latest_is_prerelease && status.latest_version && (
-            <div className={`${styles.alert} ${styles.alertWarn}`}>
-              <AlertTriangle size={15} />
-              <span>
-                {t("advancedSettings.update.prereleaseHint", {
-                  version: status.latest_version,
-                })}
-              </span>
-            </div>
-          )}
-
-          {status?.is_editable && (
-            <div className={`${styles.alert} ${styles.alertWarn}`}>
-              <AlertTriangle size={15} />
-              <span>{t("advancedSettings.update.editableHint")}</span>
-            </div>
-          )}
-
-          {status?.error && (
-            <div className={`${styles.alert} ${styles.alertError}`}>
-              <XCircle size={15} />
-              <span>
-                {status.error_code
-                  ? t(`advancedSettings.update.errors.${status.error_code}`, {
-                      defaultValue: status.error,
-                    })
-                  : status.error}
-              </span>
-            </div>
-          )}
-
-          {status?.source && status.source !== "pypi.org" && !status.error && (
-            <div className={`${styles.alert} ${styles.alertInfo}`}>
-              <Info size={15} />
-              <span>
-                {t("advancedSettings.update.mirrorSource", {
-                  source: status.source,
-                })}
-              </span>
-            </div>
-          )}
-
-          <div className={styles.actions}>
-            <button
-              type="button"
-              className={styles.btnSecondary}
-              onClick={handleCheck}
-              disabled={checking || upgrading || restartUiLocked}
-            >
-              <RefreshCw
-                size={14}
-                className={checking ? styles.spinning : undefined}
-              />
-              {checking
-                ? t("advancedSettings.update.checking")
-                : t("advancedSettings.update.checkButton")}
-            </button>
-
-            {isServiceMode && (
-              <button
-                type="button"
-                className={styles.btnSecondary}
-                onClick={requestRestart}
-                disabled={checking || upgrading || restartUiLocked}
-              >
-                <Power size={14} />
-                {isRestarting
-                  ? t("advancedSettings.update.restarting")
-                  : t("advancedSettings.update.restartServiceBtn")}
-              </button>
-            )}
-
-            {status?.has_update && !status.is_editable && !upgradeFinished && (
-              <button
-                type="button"
-                className={styles.btnPrimary}
-                onClick={handleUpgrade}
-                disabled={upgrading}
-              >
-                {upgrading
-                  ? t("advancedSettings.update.upgrading")
-                  : t("advancedSettings.update.upgradeButton")}
-              </button>
-            )}
-          </div>
-
-          {progress && (
-            <div className={styles.progressSection}>
-              {progress.status === "running" && (
-                <>
-                  <div className={styles.progressLabel}>
-                    <RefreshCw size={13} className={styles.spinning} />
-                    <span>{stageLabel(progress.stage)}</span>
-                  </div>
-                  <div className={styles.progressBar}>
-                    <div
-                      className={styles.progressFill}
-                      style={{ width: `${progress.percent ?? 10}%` }}
-                    />
-                  </div>
-                </>
-              )}
-
-              {progress.status === "complete" && (
-                <>
-                  <div className={`${styles.alert} ${styles.alertSuccess}`}>
-                    <CheckCircle size={15} />
-                    <span>
-                      {t("advancedSettings.update.upgradeSuccess")}
-                      {progress.new_version && ` → v${progress.new_version}`}
-                    </span>
-                  </div>
-
-                  {restartPhase === "idle" &&
-                    !status?.desktop &&
-                    (isServiceMode ? (
-                      <div className={`${styles.alert} ${styles.alertInfo}`}>
-                        <AlertTriangle size={15} />
-                        <div className={styles.restartRow}>
-                          <p>{t("advancedSettings.update.restartHint")}</p>
-                          <button
-                            type="button"
-                            className={styles.btnPrimary}
-                            onClick={requestRestart}
-                          >
-                            <Power size={14} />
-                            {t("advancedSettings.update.restartServiceBtn")}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className={`${styles.alert} ${styles.alertInfo}`}>
-                        <AlertTriangle size={15} />
-                        <div>
-                          <p>{t("advancedSettings.update.restartHint")}</p>
-                          <div className={styles.commandBlock}>
-                            <code>octop service restart</code>
-                            <span className={styles.commandSep}>/</span>
-                            <code>octop run</code>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                </>
-              )}
-
-              {progress.status === "error" && (
-                <div className={`${styles.alert} ${styles.alertError}`}>
-                  <XCircle size={15} />
-                  <div>
-                    <p>
-                      {t("advancedSettings.update.upgradeFailed")}:{" "}
-                      {progress.error}
-                    </p>
-                    {progress.mirror_errors &&
-                      progress.mirror_errors.length > 0 && (
-                        <div className={styles.mirrorErrors}>
-                          <p className={styles.mirrorErrorsTitle}>
-                            {t("advancedSettings.update.mirrorErrorsTitle")}
-                          </p>
-                          <ul className={styles.mirrorErrorsList}>
-                            {progress.mirror_errors.map((err) => (
-                              <li key={err}>
-                                <code>{err}</code>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    <p className={styles.manualHint}>
-                      {t("advancedSettings.update.manualUpgradeHint")}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {status?.has_update && status.release_notes && (
-            <Collapse
-              className={styles.releaseNotes}
-              defaultActiveKey={["changelog"]}
-              items={[
-                {
-                  key: "changelog",
-                  label: t("advancedSettings.update.releaseNotes"),
-                  children: <Markdown content={status.release_notes} />,
-                },
-              ]}
-            />
-          )}
-        </section>
-
-        <section className={styles.panel} aria-label="云迈自研更新">
-          <div className={styles.panelTitleRow}>
-            <span className={styles.panelTitleIcon}><Sparkles size={16} /></span>
-            <h3 className={styles.panelTitle}>云迈自研更新</h3>
-          </div>
-          <p className={styles.panelDesc}>云迈智能体自己的 Release 更新，与 OpenOct/Octop 官方更新独立比较和发布。</p>
-          <div className={styles.versionGrid}>
-            <div className={styles.versionCard}>
-              <span className={styles.versionLabel}>云迈当前版本</span>
-              <span className={styles.versionValue}>{yunmellStatus?.current_version ?? "—"}</span>
-            </div>
-            <div className={styles.versionCard}>
-              <span className={styles.versionLabel}>云迈最新版本</span>
-              <span className={styles.versionValue}>{yunmellStatus?.latest_version ?? "尚未检查"}</span>
-              <div className={styles.versionBadges}>
-                {yunmellStatus?.latest_is_prerelease && <span className={styles.betaBadge}>测试版</span>}
-                {yunmellStatus?.has_update && <span className={styles.badge}>有新版本</span>}
-              </div>
-            </div>
-          </div>
-          {yunmellStatus?.error && <div className={`${styles.alert} ${styles.alertError}`}><XCircle size={15} /><span>{yunmellStatus.error}</span></div>}
-          {yunmellStatus?.source && <div className={`${styles.alert} ${styles.alertInfo}`}><Info size={15} /><span>来源：{yunmellStatus.source}</span></div>}
-          <div className={styles.actions}>
-            <button type="button" className={styles.btnSecondary} onClick={() => void handleYunmellCheck()} disabled={yunmellChecking || upgrading}>
-              <RefreshCw size={14} className={yunmellChecking ? styles.spinning : undefined} />
-              {yunmellChecking ? "检查中" : "检查云迈更新"}
-            </button>
-            {yunmellStatus?.has_update && <button type="button" className={styles.btnPrimary} onClick={() => void handleYunmellUpgrade()}>打开云迈 Release</button>}
-          </div>
-          {yunmellStatus?.release_notes && <Collapse className={styles.releaseNotes} items={[{ key: "yunmell-notes", label: "云迈更新说明", children: <Markdown content={yunmellStatus.release_notes} /> }]} />}
-        </section>
-
-        <UpgradeGuide />
+        <ChannelPanel channel="official" initial={statuses.official} />
+        <ChannelPanel channel="yunmell" initial={statuses.yunmell} />
       </div>
+      <section
+        className={styles.panel}
+        style={{ marginTop: 20 }}
+        aria-label="更新方式"
+      >
+        <h3 className={styles.panelTitle}>更新方式</h3>
+        <p className={styles.panelDesc}>
+          桌面端下载云迈安装包升级；企业管理服务器使用云迈版本构建并更新容器。官方上游更新先进入同步分支，完成企业功能兼容验证后随云迈版本发布。
+        </p>
+      </section>
     </div>
   );
 }

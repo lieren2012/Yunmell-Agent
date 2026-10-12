@@ -46,52 +46,60 @@ async def test_update_settings_stable_only_roundtrip(env_admin_client: Any) -> N
 
 
 async def test_update_channels_are_independent(env_admin_client: Any, monkeypatch: Any) -> None:
-    from octop.api.routers import update as update_router
+    from octop.api.routers import update as router
+    from octop.infra.setup.self_update import PyPIInfo
 
     c, auth = env_admin_client
-    update_router._CHANNEL_CACHE.clear()
+    router._CHANNEL_CACHE.clear()
+    monkeypatch.setattr(router, "get_local_version", lambda: "1.0.9")
+    monkeypatch.setattr(
+        router,
+        "fetch_pypi_info",
+        lambda: PyPIInfo(version="1.0.3b1", latest_stable="1.0.2", source="pypi.org"),
+    )
 
-    def fake_check(channel: str) -> dict[str, Any]:
-        if channel == "official":
-            result = {
-                "channel": "official",
-                "current_version": "1.0.0",
-                "latest_version": "1.1.0",
-                "has_update": True,
-                "latest_is_prerelease": False,
-                "release_notes": "official notes",
-                "source": "pypi.org",
-                "source_url": "https://pypi.org/project/octop/",
-                "error": None,
-                "last_check_time": "now",
-                "upgrade_mode": "in_place",
-            }
-        else:
-            result = {
-            "channel": "yunmell",
-            "current_version": "1.0.0",
-            "latest_version": None,
-            "has_update": False,
-            "latest_is_prerelease": False,
-            "release_notes": None,
-            "source": "github.com/lieren2012/Yunmell-Agent",
-            "source_url": "https://github.com/lieren2012/Yunmell-Agent/releases",
-            "error": "Yunmell source unavailable",
-            "last_check_time": "now",
-            "upgrade_mode": "release",
-            }
-        update_router._CHANNEL_CACHE[channel] = result
-        return result
+    def unavailable(**kwargs: Any) -> Any:
+        raise OSError("offline")
 
-    monkeypatch.setattr(update_router, "_check_channel", fake_check)
+    monkeypatch.setattr(router, "_fetch_yunmell_release", unavailable)
     official = await c.post("/api/update/channels/official/check", headers=auth)
     yunmell = await c.post("/api/update/channels/yunmell/check", headers=auth)
-    assert official.status_code == 200
-    assert official.json()["latest_version"] == "1.1.0"
-    assert yunmell.status_code == 200
-    assert yunmell.json()["error"] == "Yunmell source unavailable"
+    assert official.status_code == yunmell.status_code == 200
+    assert official.json()["current_version"] == "1.0.2b6"
+    assert official.json()["latest_version"] == "1.0.2"
+    assert official.json()["has_update"] is True
+    assert official.json()["latest_is_prerelease"] is False
+    assert yunmell.json()["current_version"] == "1.0.9"
+    assert yunmell.json()["error"] is not None
+    combined = (await c.get("/api/update/channels/status", headers=auth)).json()
+    assert combined["official"]["latest_version"] == "1.0.2"
+    assert combined["yunmell"]["latest_version"] is None
+    changed = await c.patch(
+        "/api/update/channels/official/settings", json={"stable_only": False}, headers=auth
+    )
+    assert changed.json()["latest_version"] == "1.0.3b1"
+    assert changed.json()["latest_is_prerelease"] is True
+    combined = (await c.get("/api/update/channels/status", headers=auth)).json()
+    assert combined["yunmell"]["stable_only"] is True
+    router._CHANNEL_CACHE.clear()
 
-    combined = await c.get("/api/update/channels/status", headers=auth)
-    assert combined.status_code == 200
-    assert combined.json()["official"]["latest_version"] == "1.1.0"
-    assert combined.json()["yunmell"]["latest_version"] is None
+
+async def test_official_action_does_not_overwrite_yunmell(
+    env_admin_client: Any, monkeypatch: Any
+) -> None:
+    from octop.api.routers import update as router
+
+    c, auth = env_admin_client
+    router._CHANNEL_CACHE["official"] = {"latest_version": "1.0.3"}
+
+    def unexpected_install(**kwargs: Any) -> Any:
+        raise AssertionError("official action must not install over Yunmell")
+
+    monkeypatch.setattr(router, "run_upgrade", unexpected_install)
+    result = await c.post(
+        "/api/update/channels/official/upgrade", json={"version": "1.0.3"}, headers=auth
+    )
+    assert result.status_code == 200
+    assert result.json()["status"] == "upstream_sync_required"
+    assert "TencentCloud/Octop" in result.json()["source_url"]
+    router._CHANNEL_CACHE.clear()
