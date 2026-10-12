@@ -81,8 +81,13 @@ export function useChannels(agentId: string | null) {
   } = useAsyncResource<ChannelRow[]>(
     [],
     async () => {
-      const data = await request<ChannelRow[]>(`/agents/${agentId}/channels`);
-      return data ?? [];
+      try {
+        const data = await request<ChannelRow[]>(`/agents/${agentId}/channels`);
+        return data ?? [];
+      } catch (error) {
+        refreshPermissionsAfterForbidden(error);
+        throw error;
+      }
     },
     [agentId],
     {
