@@ -65,4 +65,21 @@ describe("auth token remember / session-only", () => {
     expect(mod.getAuthToken()).toBe("");
     expect(sessionStorage.getItem("auth_token")).toBeNull();
   });
+
+  it("notifies the current document when the token changes", () => {
+    const events: CustomEvent[] = [];
+    const onChange = (event: Event) => events.push(event as CustomEvent);
+    window.addEventListener(mod.AUTH_TOKEN_CHANGED_EVENT, onChange);
+
+    mod.setAuthToken("admin-token");
+    mod.setAuthToken("member-token");
+    mod.clearAuthToken();
+
+    window.removeEventListener(mod.AUTH_TOKEN_CHANGED_EVENT, onChange);
+    expect(events.map((event) => event.detail)).toEqual([
+      { previous: "", next: "admin-token", reason: "set" },
+      { previous: "admin-token", next: "member-token", reason: "set" },
+      { previous: "member-token", next: "", reason: "clear" },
+    ]);
+  });
 });

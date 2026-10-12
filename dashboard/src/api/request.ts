@@ -3,8 +3,31 @@ import i18n from "../i18n";
 import { markNavigatingAway } from "../utils/reloadOnStaleChunk";
 
 const AUTH_TOKEN_KEY = "auth_token";
+/** Storage key used by the cross-tab session guard. */
+export const AUTH_TOKEN_STORAGE_KEY = AUTH_TOKEN_KEY;
+/**
+ * Same-document notification for authentication changes.
+ *
+ * ``storage`` events only reach other tabs.  The custom event lets the
+ * current AuthGuard drop its user projection immediately when logout, a
+ * 401, or a token replacement happens in this document as well.
+ */
+export const AUTH_TOKEN_CHANGED_EVENT = "octop:auth-token-changed";
 /** sessionStorage handoff for SSO redirects / popups (default = remember). */
 const AUTH_REMEMBER_PREF_KEY = "auth_remember_pref";
+
+function notifyAuthTokenChanged(
+  previous: string,
+  next: string,
+  reason: "set" | "clear",
+): void {
+  if (typeof window === "undefined" || previous === next) return;
+  window.dispatchEvent(
+    new CustomEvent(AUTH_TOKEN_CHANGED_EVENT, {
+      detail: { previous, next, reason },
+    }),
+  );
+}
 
 /**
  * Fired when the session is no longer valid. Cancelable: a listener inside the
@@ -72,6 +95,7 @@ export function isSessionOnlyAuth(): boolean {
  * post the token back to the opener — ``sessionStorage`` is not shared.
  */
 export function setAuthToken(token: string, remember: boolean = true) {
+  const previous = getAuthToken();
   if (remember) {
     localStorage.setItem(AUTH_TOKEN_KEY, token);
     sessionStorage.removeItem(AUTH_TOKEN_KEY);
@@ -80,6 +104,7 @@ export function setAuthToken(token: string, remember: boolean = true) {
     localStorage.removeItem(AUTH_TOKEN_KEY);
   }
   clearSetupRequired();
+  notifyAuthTokenChanged(previous, token, "set");
 }
 
 /** Get JWT token from localStorage or (session-only) sessionStorage. */
@@ -93,11 +118,13 @@ export function getAuthToken(): string {
 
 /** Remove JWT token from both storages. */
 export function clearAuthToken() {
+  const previous = getAuthToken();
   localStorage.removeItem(AUTH_TOKEN_KEY);
   sessionStorage.removeItem(AUTH_TOKEN_KEY);
   sessionStorage.removeItem(AUTH_REMEMBER_PREF_KEY);
   localStorage.removeItem("octop:active-agent");
   setActiveAgentId(null);
+  notifyAuthTokenChanged(previous, "", "clear");
 }
 
 /** Persist a sliding-renewed access token from an API response, if present. */

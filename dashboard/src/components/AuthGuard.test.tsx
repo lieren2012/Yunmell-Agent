@@ -13,6 +13,8 @@ vi.mock("../api/modules/auth", () => ({
 }));
 
 vi.mock("../api/request", () => ({
+  AUTH_TOKEN_CHANGED_EVENT: "octop:auth-token-changed",
+  AUTH_TOKEN_STORAGE_KEY: "auth_token",
   getAuthToken: vi.fn(() => null),
   clearAuthToken: vi.fn(),
 }));

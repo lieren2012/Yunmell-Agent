@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Alert, Spin } from "antd";
-import { clearAuthToken, getAuthToken } from "../api/request";
+import {
+  AUTH_TOKEN_CHANGED_EVENT,
+  AUTH_TOKEN_STORAGE_KEY,
+  clearAuthToken,
+  getAuthToken,
+} from "../api/request";
 import { authApi, type OctopUser } from "../api/modules/auth";
 import { applyUserLocale } from "../utils/locale";
 import { isNetworkFetchError } from "../utils/networkError";
@@ -117,6 +122,48 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       cancelled = true;
     };
   }, [retryKey]);
+
+  // A remembered token is shared by tabs on the same origin. If another tab
+  // logs in as a different account (or logs out), this tab must not keep
+  // rendering its old /auth/me projection while requests use the new token.
+  // Drop the protected tree and make the user explicitly log in again.
+  useEffect(() => {
+    const invalidateAndLogin = () => {
+      setUser(null);
+      setAuthed(false);
+      setChecking(true);
+      // Cancel an in-flight check that could otherwise commit the old user
+      // projection after this tab has observed the cross-tab token change.
+      setRetryKey((key) => key + 1);
+      navigateRef.current("/login", { replace: true });
+    };
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== AUTH_TOKEN_STORAGE_KEY) return;
+      if (event.newValue === event.oldValue) return;
+      invalidateAndLogin();
+    };
+
+    const onAuthChanged = (event: Event) => {
+      // Token renewal is a same-document ``set`` and keeps the same user;
+      // dropping the whole shell on every sliding renewal would interrupt
+      // active streams. Fresh login happens on the public route, while a
+      // clear (logout/401) must force the normal gate re-check here.
+      const reason = (event as CustomEvent<{ reason?: string }>).detail?.reason;
+      if (reason === "set") return;
+      setUser(null);
+      setAuthed(false);
+      setChecking(true);
+      setRetryKey((key) => key + 1);
+    };
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(AUTH_TOKEN_CHANGED_EVENT, onAuthChanged);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT, onAuthChanged);
+    };
+  }, []);
 
   if (offline) {
     return (
