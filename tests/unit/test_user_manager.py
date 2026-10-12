@@ -372,6 +372,28 @@ async def test_get_by_username_and_id(manager: UserManager):
     assert manager.get_by_id(user.id).username == "a"
 
 
+async def test_get_by_id_refreshes_permissions_from_database(manager: UserManager):
+    """Auth must observe permission changes made outside this process cache."""
+    user = await manager.create(username="a", password="TestPass12", role=Role.USER)
+    manager._services.user_repo.set_permissions(user.id, ["channels"])
+
+    refreshed = manager.get_by_id(user.id)
+
+    assert refreshed is user
+    assert refreshed.permissions == ["channels"]
+
+
+async def test_authenticate_refreshes_permissions_from_database(manager: UserManager):
+    """A re-login must not resurrect a stale in-memory permission snapshot."""
+    user = await manager.create(username="a", password="TestPass12", role=Role.USER)
+    manager._services.user_repo.set_permissions(user.id, ["channels"])
+
+    refreshed = await manager.authenticate("a", "TestPass12")
+
+    assert refreshed is user
+    assert refreshed.permissions == ["channels"]
+
+
 async def test_change_password(manager: UserManager):
     user = await manager.create(username="a", password="OldPass12", role=Role.USER)
     await manager.change_password(user.username, "OldPass12", "NewPass12")

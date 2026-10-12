@@ -220,10 +220,19 @@ class UserManager:
         return self._users.get(username)
 
     def get_by_id(self, user_id: int) -> User | None:
-        for u in self._users.values():
-            if u.id == user_id:
-                return u
-        return None
+        """Return an active user with permissions synchronized from the DB.
+
+        Authentication dependencies may run in a different worker/process from
+        the admin request that changed a user's role or permissions.  Looking
+        only in ``_users`` therefore allowed an old in-memory snapshot to keep
+        authorizing (or denying) the user's JWT.  The DB row is the source of
+        truth for every authenticated request; refresh the cached identity when
+        it exists and adopt it when this process has not seen it yet.
+        """
+        row = self._services.user_repo.get(user_id)
+        if row is None or row.disabled or row.approval_status != "approved":
+            return None
+        return self._cached_or_row_user(row)
 
     def get_row(self, user_id: int) -> Any:
         """Return the raw UserRow (includes disabled flag) for admin read operations."""
@@ -419,6 +428,14 @@ class UserManager:
     def _cached_or_row_user(self, row: Any) -> User:
         cached = self._users.get(row.username)
         if cached is not None:
+            # Role and module permissions are mutable admin state.  Keep the
+            # process-local identity in lockstep with the durable row so a
+            # token cannot retain stale authorization after an update made by
+            # another worker or an external control-plane process.
+            cached.role = str(row.role)
+            cached.display_name = row.display_name
+            cached.locale = normalize_locale(row.locale)
+            cached.permissions = list(row.permissions)
             return cached
         user = User(
             id=row.id,
@@ -497,17 +514,7 @@ class UserManager:
                 )
             return None
         self._services.user_repo.clear_login_lockout(row.id)
-        user = self._users.get(row.username)
-        if user is None:
-            user = User(
-                id=row.id,
-                username=row.username,
-                role=str(row.role),
-                display_name=row.display_name,
-                locale=normalize_locale(row.locale),
-                permissions=list(row.permissions),
-            )
-            self._users[row.username] = user
+        user = self._cached_or_row_user(row)
         self._services.audit_repo.write(actor=row.username, action="auth.login")
         return user
 

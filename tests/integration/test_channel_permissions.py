@@ -80,6 +80,24 @@ async def test_user_without_channels_permission_is_forbidden(env_with_provider: 
     assert denied.json()["error"]["details"]["permission"] == "channels"
 
 
+async def test_granting_channels_updates_existing_token(env_with_provider: Any) -> None:
+    """A DB permission grant is visible to a token issued before the grant."""
+    client, server, admin_auth = env_with_provider
+    user_auth, agent_id, user_id = await _user_agent(
+        client,
+        admin_auth,
+        permissions=[],
+    )
+
+    server.services.user_repo.set_permissions(user_id, ["channels"])
+    allowed = await client.post(
+        f"/api/agents/{agent_id}/channels",
+        headers=user_auth,
+        json={"kind": "feishu", "name": "after-grant", "config": {}},
+    )
+    assert allowed.status_code == 201, allowed.text
+
+
 async def test_revoking_channels_blocks_existing_token(env_with_provider: Any) -> None:
     client, server, admin_auth = env_with_provider
     user_auth, agent_id, user_id = await _user_agent(
