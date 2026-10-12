@@ -364,8 +364,8 @@ func main() {
 	}
 
 	app := application.New(application.Options{
-		Name:        "Yunmell-Agent",
-		Description: "Yunmell-Agent desktop",
+		Name:        "云迈智能体",
+		Description: "云迈智能体桌面客户端",
 		Services: []application.Service{
 			application.NewService(api),
 		},

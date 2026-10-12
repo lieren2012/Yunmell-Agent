@@ -6,11 +6,11 @@ version: "3"
 
 info:
   companyName: "Yunmell"
-  productName: "Yunmell-Agent"
+  productName: "云迈智能体"
   productIdentifier: "com.yunmell.agent"
-  description: "Yunmell-Agent desktop shell"
+  description: "云迈智能体桌面客户端"
   copyright: "(c) 2026, Yunmell"
-  comments: "Wails v3 + green portable"
+  comments: "云迈智能体桌面客户端"
   version: "1.0.10b9"
 
 dev_mode:

@@ -289,7 +289,7 @@ export default function LoginPage() {
         }}
       >
         <img
-          src="/favico.svg"
+          src="/yunmell-icon.png"
           alt="云迈智能体"
           style={{
             height: 48,

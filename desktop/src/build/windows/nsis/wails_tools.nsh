@@ -14,7 +14,7 @@
     !define INFO_COMPANYNAME "Yunmell"
 !endif
 !ifndef INFO_PRODUCTNAME
-    !define INFO_PRODUCTNAME "Yunmell-Agent"
+    !define INFO_PRODUCTNAME "云迈智能体"
 !endif
 !ifndef INFO_PRODUCTVERSION
     !define INFO_PRODUCTVERSION "0.9.31"

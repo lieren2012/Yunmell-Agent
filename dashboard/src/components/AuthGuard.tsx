@@ -151,6 +151,14 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       // clear (logout/401) must force the normal gate re-check here.
       const reason = (event as CustomEvent<{ reason?: string }>).detail?.reason;
       if (reason === "renew") return;
+      if (reason === "set") {
+        setUser(null);
+        setAuthed(false);
+        setChecking(true);
+        setRetryKey((key) => key + 1);
+        navigateRef.current("/login", { replace: true });
+        return;
+      }
       setUser(null);
       setAuthed(false);
       setChecking(true);

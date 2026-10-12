@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -133,6 +133,46 @@ describe("AuthGuard offline boot", () => {
       name: /errors\.retry|Retry|重试/,
     });
     await user.click(retry);
+    await waitFor(() => {
+      expect(screen.getByText("protected-shell")).toBeInTheDocument();
+    });
+  });
+
+  it("drops the protected projection when the same tab replaces its token", async () => {
+    vi.mocked(getAuthToken).mockReturnValue("admin-token");
+    vi.mocked(authApi.getAuthStatus).mockResolvedValue({
+      setup_required: false,
+      has_admin: true,
+    } as never);
+    vi.mocked(authApi.me).mockResolvedValue({
+      id: 1,
+      username: "admin",
+      role: "admin",
+      locale: "zh",
+    } as never);
+
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <AuthGuard>
+          <div>protected-shell</div>
+        </AuthGuard>
+      </MemoryRouter>,
+    );
+
     expect(await screen.findByText("protected-shell")).toBeInTheDocument();
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("octop:auth-token-changed", {
+          detail: {
+            previous: "admin-token",
+            next: "member-token",
+            reason: "set",
+          },
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("protected-shell")).not.toBeInTheDocument();
+    });
   });
 });
