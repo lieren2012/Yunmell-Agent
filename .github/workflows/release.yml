@@ -64,6 +64,7 @@ jobs:
 
   publish:
     name: Publish to PyPI
+    if: github.repository == 'TencentCloud/Octop'
     needs: build
     runs-on: ubuntu-latest
     environment: pypi
@@ -132,6 +133,7 @@ jobs:
           body_path: .release-notes.md
           files: dist/*
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
 
   # workflow_run / release:published are unreliable when Release itself was
   # started via GITHUB_TOKEN workflow_dispatch (Auto Tag). Explicitly cascade.

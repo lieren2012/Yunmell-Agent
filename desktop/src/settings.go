@@ -27,7 +27,9 @@ type Settings struct {
 	Port           int    `json:"port,omitempty"`
 	// ControlPlaneURL selects the remote management/login service. Empty means
 	// the desktop starts and uses its bundled local runtime.
-	ControlPlaneURL string `json:"controlPlaneUrl,omitempty"`
+	ControlPlaneURL   string `json:"controlPlaneUrl,omitempty"`
+	UpdateRepository  string `json:"updateRepository,omitempty"`
+	IncludePrerelease bool   `json:"includePrerelease,omitempty"`
 }
 
 func defaultSettings() Settings {
@@ -104,6 +106,9 @@ func (st *settingsStore) save(next Settings) error {
 		return err
 	}
 	next.ControlPlaneURL = normalized
+	if next.UpdateRepository != "" && !repositoryPattern.MatchString(next.UpdateRepository) {
+		return fmt.Errorf("update repository must be a GitHub owner/repository")
+	}
 	if err := os.MkdirAll(octopHome(), 0o755); err != nil {
 		return err
 	}

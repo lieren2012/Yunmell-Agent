@@ -8,6 +8,10 @@ import {
   type UpdateChannelStatus,
 } from "../../../api/modules/update";
 import Markdown from "../../../components/Markdown/LazyMarkdown";
+import {
+  isDesktopShell,
+  showDesktopClientUpdates,
+} from "../../../utils/desktopChrome";
 import { TabPanelHeader } from "./TabPanelHeader";
 import styles from "./UpdateConfig.module.less";
 
@@ -25,6 +29,7 @@ function ChannelPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const official = channel === "official";
+  const desktop = !official && isDesktopShell();
   useEffect(() => {
     if (initial) setStatus(initial);
   }, [initial]);
@@ -46,6 +51,10 @@ function ChannelPanel({
   }
 
   async function openRelease() {
+    if (desktop) {
+      showDesktopClientUpdates();
+      return;
+    }
     try {
       const result = await updateApi.upgradeChannel(
         channel,
@@ -158,9 +167,13 @@ function ChannelPanel({
           type="button"
           className={styles.btnSecondary}
           onClick={() => void openRelease()}
-          disabled={!status?.latest_version || !!status?.error}
+          disabled={!desktop && (!status?.latest_version || !!status?.error)}
         >
-          {official ? "查看官方更新与同步" : "下载 / 安装云迈新版"}
+          {official
+            ? "查看官方更新与同步"
+            : desktop
+            ? "客户端内更新"
+            : "下载 / 安装云迈新版"}
         </button>
       </div>
       {status?.release_notes && (

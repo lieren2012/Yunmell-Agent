@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -27,6 +28,8 @@ type App struct {
 	app            *application.App
 	window         *application.WebviewWindow
 	settingsWindow *application.WebviewWindow
+	updateWindow   *application.WebviewWindow
+	updater        *clientUpdater
 	store          *settingsStore
 	sleep          *sleepGuard
 	cmd            *exec.Cmd
@@ -299,6 +302,10 @@ func (a *App) requestQuit() {
 }
 
 func main() {
+	if handleClientUpdateCommand() {
+		return
+	}
+	updatesOnly := len(os.Args) == 2 && os.Args[1] == "--client-updates"
 	store := &settingsStore{cur: loadSettings()}
 	api := &App{
 		store: store,
@@ -325,6 +332,11 @@ func main() {
 		},
 	})
 	api.app = app
+	repository := store.get().UpdateRepository
+	if value := strings.TrimSpace(os.Getenv("YUNMELL_UPDATE_REPO")); value != "" {
+		repository = value
+	}
+	api.updater = newClientUpdater(repository, greenPlat(), filepath.Join(octopHome(), "updates"), func(status ClientUpdateStatus) { app.Event.Emit("desktop:client-update", status) })
 	attachOpenURLEventListener(app, api.OpenExternal)
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
 		applyAppIcon(app)
@@ -335,6 +347,7 @@ func main() {
 		Width:                1200,
 		Height:               800,
 		URL:                  "/",
+		Hidden:               updatesOnly,
 		Frameless:            true,
 		AllowSimpleEventEmit: true,
 		BackgroundColour:     application.NewRGB(247, 248, 250),
@@ -368,6 +381,13 @@ func main() {
 		},
 	})
 	api.settingsWindow = settingsWin
+	updatesWin := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title: "云迈客户端更新", Width: 560, Height: 620,
+		URL: "/updates.html", Hidden: true, BackgroundColour: application.NewRGB(255, 255, 255),
+	})
+	api.updateWindow = updatesWin
+	updatesWin.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) { event.Cancel(); updatesWin.Hide() })
+	app.Event.On("desktop:show-updates", func(_ *application.CustomEvent) { api.ShowClientUpdates() })
 	app.Event.RegisterApplicationEventHook(events.Mac.ApplicationShouldHandleReopen, func(event *application.ApplicationEvent) {
 		event.Cancel()
 		restoreMainAfterDockClick(api.window, api.settingsWindow)
@@ -408,15 +428,28 @@ func main() {
 	}
 	tray.OnRightClick(showSettings)
 
-	if _, err := api.setAutostart(store.get().Autostart); err != nil {
-		log.Printf("sync autostart: %v", err)
-	}
-	if err := api.sleep.set(store.get().PreventSleep); err != nil {
-		log.Printf("enable sleep prevention: %v", err)
+	if !updatesOnly {
+		if _, err := api.setAutostart(store.get().Autostart); err != nil {
+			log.Printf("sync autostart: %v", err)
+		}
+		if err := api.sleep.set(store.get().PreventSleep); err != nil {
+			log.Printf("enable sleep prevention: %v", err)
+		}
 	}
 
 	api.scheduleDragOverlay()
-	go api.boot()
+	if !updatesOnly {
+		go api.boot()
+	}
+	go func() {
+		time.Sleep(time.Second)
+		if updatesOnly {
+			api.ShowClientUpdates()
+		}
+		if err := api.updater.check(store.get().IncludePrerelease); err == nil && api.updater.snapshot().HasUpdate {
+			api.ShowClientUpdates()
+		}
+	}()
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

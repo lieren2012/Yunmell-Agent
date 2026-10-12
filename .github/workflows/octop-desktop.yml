@@ -290,6 +290,19 @@ jobs:
           VERSION=${{ env.OCTOP_VERSION }}
           PORTABLE_ZIP=../portable/release/Octop-portable-${{ matrix.plat }}-${{ env.OCTOP_VERSION }}.zip
 
+      - name: Verify updater and publish installer checksums
+        run: |
+          set -euo pipefail
+          (cd desktop/src && go test ./...)
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          for asset in Path('desktop/src/bin').glob('Yunmell-Agent-desktop-*'):
+              if asset.is_file() and not asset.name.endswith('.sha256'):
+                  digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+                  asset.with_name(asset.name + '.sha256').write_text(digest + '  ' + asset.name + '\n')
+          PY
+
       # archive: false — upload the prebuilt zip as-is. Default archive=true would
       # wrap it again, so Actions UI / "Download artifact" becomes zip-in-zip.
       # With archive:false, artifact name is the filename (name: is ignored).
@@ -378,3 +391,14 @@ jobs:
           fail_on_unmatched_files: true
           # Upsert: works whether Release workflow already created the release.
           generate_release_notes: false
+          name: "云迈客户端 ${{ steps.rel.outputs.tag }}"
+          body: |
+            云迈桌面客户端内更新测试版。
+
+            - 启动自动检查和手动检查云迈 GitHub Releases，默认只检查稳定版。
+            - 平台安装包下载进度、GitHub 来源与 SHA-256 校验。
+            - 安装前确认、失败恢复旧程序、原用户权限重启和本地数据保留。
+            - 官方 Octop 仅展示同步状态；客户端与企业管理服务器分别升级。
+
+            1.0.9 及更早版本需先安装一次带更新器的新客户端。测试版之间升级请启用“包含测试版”。
+          prerelease: ${{ contains(steps.rel.outputs.tag, 'b') || contains(steps.rel.outputs.tag, 'rc') }}

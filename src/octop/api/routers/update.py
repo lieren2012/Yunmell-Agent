@@ -328,6 +328,11 @@ async def trigger_upgrade(
     server: Any = Depends(get_server),
     _: Any = Depends(require_permission("update")),
 ) -> dict[str, Any]:
+    if _is_desktop_process():
+        raise OctopError(
+            ErrorCode.FORBIDDEN,
+            "Use the Yunmell desktop client updater; official packages cannot overwrite this client.",
+        )
     if get_editable_path() is not None:
         raise OctopError(
             ErrorCode.FORBIDDEN,

@@ -567,6 +567,15 @@ async def test_trigger_upgrade_defaults_to_channel_latest(
 
 
 @pytest.mark.asyncio
+async def test_desktop_cannot_install_official_package(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(update_router, "_is_desktop_process", lambda: True)
+    with pytest.raises(OctopError, match="desktop client updater"):
+        await update_router.trigger_upgrade(
+            body=update_router.UpgradeBody(), server=_settings_server(), _=None
+        )
+
+
+@pytest.mark.asyncio
 async def test_upgrade_worker_falls_back_to_pinned_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

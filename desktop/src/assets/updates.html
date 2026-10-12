@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>云迈客户端更新</title>
+<style>
+body{margin:0;padding:24px;font:14px/1.6 "Segoe UI","Microsoft YaHei",sans-serif;color:#172033;background:#f8fafc}h1{font-size:21px;margin:0 0 8px}.card{padding:18px;margin:14px 0;background:white;border:1px solid #e5e7eb;border-radius:12px}.versions{display:flex;gap:32px}.versions strong{display:block;font-size:20px}.muted{font-size:12px;color:#64748b}.notes{white-space:pre-wrap;max-height:150px;overflow:auto;word-break:break-word}button{font:inherit;border:1px solid #dbe0e8;background:white;border-radius:8px;padding:8px 13px;cursor:pointer}button:disabled{opacity:.45;cursor:default}.primary{background:#ed5876;color:white;border-color:#ed5876}.actions{display:flex;gap:8px;flex-wrap:wrap}progress{width:100%;height:14px}#error{color:#b42318;white-space:pre-wrap}#confirm{border:1px solid #f3c47b;background:#fff7e9;border-radius:12px;padding:16px}#confirm[hidden]{display:none}
+</style></head>
+<body>
+<h1>云迈客户端更新</h1><div class="muted">更新桌面客户端，保留本地会话、文件和企业连接配置。管理服务器单独升级。</div>
+<div class="card versions"><div>当前客户端<strong id="current">—</strong></div><div>最新发布<strong id="latest">尚未检查</strong><span id="beta" class="muted"></span></div></div>
+<label><input type="checkbox" id="include-beta"> 包含测试版（默认只检查稳定版）</label>
+<div class="card"><div id="stage">正在读取更新状态…</div><progress id="progress" value="0" max="100" hidden></progress><div class="muted" id="bytes"></div><div id="error" role="alert"></div><div id="last-install" class="muted"></div></div>
+<div class="actions"><button id="check">检查更新</button><button id="download">下载新版</button><button id="install" class="primary">安装并重启</button></div>
+<div id="confirm" hidden><strong>安装前请保存工作</strong><p>客户端将退出并安装已校验的云迈新版，随后重新启动。进行中的任务会停止；本地数据保留。Windows 可能请求安装权限。</p><div class="actions"><button id="confirm-install" class="primary">已保存，确认安装并重启</button><button id="cancel-install">稍后安装</button></div></div>
+<div class="card"><strong>更新说明</strong><div class="notes" id="notes">暂无更新说明</div><div class="muted" id="source"></div></div>
+<script type="module">
+import { Call, Events } from "/wails/runtime.js";
+const el=(id)=>document.getElementById(id);
+const call=(name,...args)=>Call.ByName("main.App."+name,...args);
+const stageNames={idle:"尚未检查",checking:"正在检查云迈 Release…",checked:"检查完成",downloading:"正在后台下载…",ready:"下载完成，SHA-256 校验通过",installing:"正在退出客户端并安装…",error:"更新未完成，当前版本已保留"};
+function render(status){
+ el("current").textContent=status.currentVersion;el("latest").textContent=status.latestVersion||"尚未检查";el("notes").textContent=status.releaseNotes||"暂无更新说明";el("source").textContent="来源："+status.source;el("beta").textContent=status.prerelease?"测试版":"";el("error").textContent=status.error||"";el("last-install").textContent=status.lastInstall||"";
+ const busy=["checking","downloading","installing"].includes(status.stage);
+ el("stage").textContent=stageNames[status.stage]||status.stage;
+ if(status.stage==="checked"&&!status.hasUpdate)el("stage").textContent="当前客户端已是所选渠道的最新版本";
+ el("check").disabled=busy;el("include-beta").disabled=busy;el("download").disabled=busy||!status.hasUpdate||status.stage==="ready";el("install").disabled=status.stage!=="ready";
+ el("progress").hidden=status.stage!=="downloading";el("progress").value=status.total?100*status.downloaded/status.total:0;el("bytes").textContent=status.stage==="downloading"?`${(status.downloaded/1048576).toFixed(1)} / ${(status.total/1048576).toFixed(1)} MB`:"";
+}
+async function action(name,...args){try{await call(name,...args);render(await call("GetClientUpdateStatus"));}catch(error){el("error").textContent=String(error);}}
+el("check").onclick=()=>action("CheckClientUpdate",el("include-beta").checked);
+el("include-beta").onchange=el("check").onclick;
+el("download").onclick=()=>action("DownloadClientUpdate");
+el("install").onclick=()=>{el("confirm").hidden=false;};el("cancel-install").onclick=()=>{el("confirm").hidden=true;};
+el("confirm-install").onclick=()=>{el("confirm").hidden=true;action("InstallClientUpdate",true);};
+Events.On("desktop:client-update",()=>{void call("GetClientUpdateStatus").then(render);});
+const settings=await call("GetSettingsStatus");el("include-beta").checked=!!settings.includePrerelease;
+render(await call("GetClientUpdateStatus"));
+</script></body></html>
