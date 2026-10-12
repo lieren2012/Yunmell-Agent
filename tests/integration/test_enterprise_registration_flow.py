@@ -103,7 +103,11 @@ async def test_enterprise_default_model_is_configurable(env):
     )
     assert provider.status_code == 201, provider.text
     organization = await client.get("/api/admin/enterprise/organizations", headers=admin_auth)
-    slug = next(row["login_slug"] for row in organization.json() if row["organization_id"] == organization_id)
+    slug = next(
+        row["login_slug"]
+        for row in organization.json()
+        if row["organization_id"] == organization_id
+    )
     saved = await client.put(
         f"/api/admin/enterprise/organizations/{organization_id}/default-model",
         headers=admin_auth,

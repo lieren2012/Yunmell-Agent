@@ -11,7 +11,7 @@ info:
   description: "Yunmell-Agent desktop shell"
   copyright: "(c) 2026, Yunmell"
   comments: "Wails v3 + green portable"
-  version: "1.0.10b7"
+  version: "1.0.10b8"
 
 dev_mode:
   root_path: .

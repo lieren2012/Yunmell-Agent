@@ -8,6 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 type StartupStatus struct {
@@ -46,6 +49,9 @@ func (a *App) RetryStartup() error {
 	if a.GetStartupStatus().Busy {
 		return fmt.Errorf("启动检查正在进行，请稍候")
 	}
+	if err := a.store.reload(); err != nil {
+		return err
+	}
 	if a.window != nil {
 		a.window.SetURL("/")
 	}
@@ -53,8 +59,19 @@ func (a *App) RetryStartup() error {
 	return nil
 }
 func (a *App) ShowConnectionSettings() {
-	if a.settingsWindow != nil {
-		a.settingsWindow.Show()
+	// Tray-attached popovers are positioned/hidden by the tray controller.
+	// Startup recovery needs its own normal window, independent of the tray.
+	if a.app == nil {
+		return
+	}
+	if a.connectionWindow == nil {
+		a.connectionWindow = a.app.Window.NewWithOptions(application.WebviewWindowOptions{
+			Title: "云迈智能体连接设置", URL: "/?settings=1", Width: settingsWindowWidth, Height: settingsWindowOuterHeight(), Frameless: true,
+			BackgroundColour: application.NewRGB(255, 255, 255),
+		})
+		a.connectionWindow.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) { event.Cancel(); a.connectionWindow.Hide() })
+	} else {
+		a.connectionWindow.Show()
 	}
 }
 

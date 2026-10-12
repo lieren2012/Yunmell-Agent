@@ -27,19 +27,20 @@ const trayDoubleClick = 400 * time.Millisecond
 
 // App is the Wails service bound to the shell UI.
 type App struct {
-	app            *application.App
-	window         *application.WebviewWindow
-	settingsWindow *application.WebviewWindow
-	updateWindow   *application.WebviewWindow
-	updater        *clientUpdater
-	bootMu         sync.Mutex
-	startupMu      sync.Mutex
-	startup        StartupStatus
-	store          *settingsStore
-	sleep          *sleepGuard
-	cmd            *exec.Cmd
-	mu             sync.Mutex
-	quitting       bool
+	app              *application.App
+	window           *application.WebviewWindow
+	settingsWindow   *application.WebviewWindow
+	connectionWindow *application.WebviewWindow
+	updateWindow     *application.WebviewWindow
+	updater          *clientUpdater
+	bootMu           sync.Mutex
+	startupMu        sync.Mutex
+	startup          StartupStatus
+	store            *settingsStore
+	sleep            *sleepGuard
+	cmd              *exec.Cmd
+	mu               sync.Mutex
+	quitting         bool
 
 	trayClickMu    sync.Mutex
 	lastTrayClick  time.Time
@@ -111,6 +112,9 @@ func (a *App) ShowMain() {
 }
 
 func (a *App) HideSettings() {
+	if a.connectionWindow != nil {
+		a.connectionWindow.Hide()
+	}
 	if a.settingsWindow == nil {
 		return
 	}

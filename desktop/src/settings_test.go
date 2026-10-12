@@ -54,3 +54,26 @@ func TestSettingsSavePersistsControlPlaneURL(t *testing.T) {
 		t.Fatalf("loaded control plane URL = %q", loaded.ControlPlaneURL)
 	}
 }
+
+func TestRetryReloadsSavedConnectionWithoutDroppingOtherSettings(t *testing.T) {
+	t.Setenv("OCTOP_HOME", t.TempDir())
+	store := &settingsStore{cur: Settings{ControlPlaneURL: "http://127.0.0.1:1"}}
+	if err := os.WriteFile(settingsPath(), []byte(`{"controlPlaneUrl":"http://10.31.3.82:6602","port":16689,"locale":"zh","includePrerelease":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.reload(); err != nil {
+		t.Fatal(err)
+	}
+	if store.get().ControlPlaneURL != "http://10.31.3.82:6602" || store.get().Port != 16689 || !store.get().IncludePrerelease {
+		t.Fatal("saved connection/settings were not reloaded")
+	}
+	if err := os.WriteFile(settingsPath(), []byte(`not valid JSON`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.reload(); err == nil {
+		t.Fatal("invalid settings must not silently reset the connection")
+	}
+	if store.get().ControlPlaneURL != "http://10.31.3.82:6602" {
+		t.Fatal("invalid settings replaced working configuration")
+	}
+}

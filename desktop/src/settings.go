@@ -95,6 +95,33 @@ func (st *settingsStore) get() Settings {
 	return st.cur
 }
 
+func (st *settingsStore) reload() error {
+	data, err := os.ReadFile(settingsPath())
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	next := defaultSettings()
+	if err = json.Unmarshal(data, &next); err != nil {
+		return fmt.Errorf("客户端设置文件格式无效；请先修正设置")
+	}
+	if next.Port == 0 {
+		next.Port = 8088
+	}
+	if next.Port < 1 || next.Port > 65535 {
+		return fmt.Errorf("本机端口必须为 1–65535")
+	}
+	if _, err = normalizeControlPlaneURL(next.ControlPlaneURL); err != nil {
+		return err
+	}
+	st.mu.Lock()
+	st.cur = next
+	st.mu.Unlock()
+	return nil
+}
+
 func (st *settingsStore) save(next Settings) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
