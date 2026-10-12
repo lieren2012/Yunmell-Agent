@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
 import time
+import urllib.request
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Query
@@ -48,6 +50,8 @@ router = APIRouter(prefix="/update", tags=["update"])
 
 _STABLE_ONLY_KEY = "update.stable_only"
 _CACHE_INTERNAL = frozenset({"latest_any", "latest_stable", "description"})
+_CHANNEL_CACHE: dict[str, dict[str, Any]] = {}
+_YUNMELL_REPO = os.environ.get("YUNMELL_RELEASE_REPO", "lieren2012/Yunmell-Agent")
 
 
 class UpdateSettingsBody(BaseModel):
@@ -59,6 +63,10 @@ class UpgradeBody(BaseModel):
         default=None,
         description="Pin this release. Defaults to the channel latest (stable when stable_only).",
     )
+
+
+class ChannelUpgradeBody(BaseModel):
+    version: str | None = Field(default=None)
 
 
 def _read_stable_only(server: Any | None) -> bool:
@@ -366,6 +374,111 @@ def _is_desktop_process() -> bool:
         return True
     raw = (os.environ.get("OCTOP_DESKTOP") or "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def _channel_current_version(channel: str) -> str:
+    """Return the version owned by this channel, without cross-channel fallback."""
+    if channel == "yunmell":
+        return os.environ.get("YUNMELL_AGENT_VERSION", get_local_version())
+    return os.environ.get("OCTOP_OFFICIAL_VERSION", get_local_version())
+
+
+def _channel_payload(channel: str, *, latest: str | None = None, prerelease: bool = False,
+                     notes: str | None = None, source: str | None = None,
+                     source_url: str | None = None, error: str | None = None,
+                     checked_at: str | None = None) -> dict[str, Any]:
+    current = _channel_current_version(channel)
+    return {
+        "channel": channel,
+        "current_version": current,
+        "latest_version": latest,
+        "has_update": bool(latest and is_newer(latest, current)),
+        "latest_is_prerelease": prerelease,
+        "release_notes": notes,
+        "source": source,
+        "source_url": source_url,
+        "error": error,
+        "last_check_time": checked_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "upgrade_mode": "in_place" if channel == "official" else "release",
+    }
+
+
+def _fetch_yunmell_release() -> dict[str, Any]:
+    url = f"https://api.github.com/repos/{_YUNMELL_REPO}/releases/latest"
+    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "yunmell-agent-updater/1.0"})
+    with urllib.request.urlopen(req, timeout=10) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    tag = str(data.get("tag_name") or "").strip()
+    version = tag[1:] if tag.startswith("v") else tag
+    return {
+        "version": version or None,
+        "prerelease": bool(data.get("prerelease")),
+        "notes": data.get("body") or None,
+        "source": f"github.com/{_YUNMELL_REPO}",
+        "source_url": data.get("html_url") or f"https://github.com/{_YUNMELL_REPO}/releases",
+    }
+
+
+def _check_channel(channel: str) -> dict[str, Any]:
+    if channel == "official":
+        info = fetch_pypi_info()
+        if info is None:
+            result = _channel_payload(channel, error="could not reach official PyPI source", source="pypi.org", source_url="https://pypi.org/project/octop/")
+        else:
+            result = _channel_payload(channel, latest=info.version, prerelease=is_prerelease(info.version), notes=info.description, source=info.source or "pypi.org", source_url="https://pypi.org/project/octop/")
+    elif channel == "yunmell":
+        try:
+            info = _fetch_yunmell_release()
+            result = _channel_payload(channel, latest=info["version"], prerelease=info["prerelease"], notes=info["notes"], source=info["source"], source_url=info["source_url"])
+        except Exception as exc:
+            result = _channel_payload(channel, error=f"could not reach Yunmell Release source: {exc}", source=f"github.com/{_YUNMELL_REPO}", source_url=f"https://github.com/{_YUNMELL_REPO}/releases")
+    else:
+        raise OctopError(ErrorCode.SLASH_BAD_ARGS, "unknown update channel", status=400)
+    _CHANNEL_CACHE[channel] = result
+    return result
+
+
+@router.get("/channels/status")
+async def update_channels_status(
+    _: Any = Depends(current_user),
+) -> dict[str, dict[str, Any]]:
+    """Return independent official and Yunmell update lines."""
+    return {
+        channel: _CHANNEL_CACHE.get(channel) or _channel_payload(channel)
+        for channel in ("official", "yunmell")
+    }
+
+
+@router.post("/channels/{channel}/check")
+async def check_update_channel(
+    channel: str,
+    _: Any = Depends(require_permission("update")),
+) -> dict[str, Any]:
+    return await asyncio.to_thread(_check_channel, channel)
+
+
+@router.post("/channels/{channel}/upgrade")
+async def upgrade_update_channel(
+    channel: str,
+    body: ChannelUpgradeBody = Body(default_factory=ChannelUpgradeBody),
+    _: Any = Depends(require_permission("update")),
+) -> dict[str, Any]:
+    """Start an official in-place upgrade or return the Yunmell Release action.
+
+    Yunmell control-plane Docker/source deployments are upgraded from their
+    tagged Release; the API returns that exact source URL so it cannot silently
+    run the official Octop updater against the wrong channel.
+    """
+    if channel == "yunmell":
+        info = _CHANNEL_CACHE.get(channel) or await asyncio.to_thread(_check_channel, channel)
+        return {"channel": channel, "status": "release_required", "source_url": info.get("source_url"), "version": body.version or info.get("latest_version")}
+    if channel != "official":
+        raise OctopError(ErrorCode.SLASH_BAD_ARGS, "unknown update channel", status=400)
+    task = await create_task()
+    info = _CHANNEL_CACHE.get(channel) or await asyncio.to_thread(_check_channel, channel)
+    target = body.version or info.get("latest_version")
+    asyncio.create_task(_upgrade_worker(task.task_id, allow_prerelease=bool(target and is_prerelease(target)), version=target))
+    return {"channel": channel, "task_id": task.task_id, "status": "started"}
 
 
 def _restart_desktop_process(server: OctopServer) -> None:

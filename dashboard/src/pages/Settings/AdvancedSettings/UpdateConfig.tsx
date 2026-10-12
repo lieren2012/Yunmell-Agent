@@ -14,6 +14,7 @@ import {
 import {
   updateApi,
   UpdateStatus,
+  UpdateChannelStatus,
   UpgradeProgress,
 } from "../../../api/modules/update";
 import Markdown from "../../../components/Markdown/LazyMarkdown";
@@ -151,6 +152,8 @@ export default function UpdateConfig() {
   const { t } = useTranslation();
   const { modal } = App.useApp();
   const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [yunmellStatus, setYunmellStatus] = useState<UpdateChannelStatus | null>(null);
+  const [yunmellChecking, setYunmellChecking] = useState(false);
   const [savingStableOnly, setSavingStableOnly] = useState(false);
   const [checking, setChecking] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
@@ -169,6 +172,10 @@ export default function UpdateConfig() {
         setStatus(next);
       })
       .catch(() => {});
+    updateApi
+      .getChannelStatuses()
+      .then((next) => setYunmellStatus(next.yunmell))
+      .catch(() => {});
     return () => {
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     };
@@ -186,12 +193,28 @@ export default function UpdateConfig() {
     try {
       const result = await updateApi.checkForUpdates();
       setStatus(result);
+      updateApi.checkChannel("official").catch(() => {});
     } catch {
       // network error – keep existing status
     } finally {
       setChecking(false);
     }
   }, []);
+
+  const handleYunmellCheck = useCallback(async () => {
+    setYunmellChecking(true);
+    try {
+      setYunmellStatus(await updateApi.checkChannel("yunmell"));
+    } finally {
+      setYunmellChecking(false);
+    }
+  }, []);
+
+  const handleYunmellUpgrade = useCallback(async () => {
+    if (!yunmellStatus?.latest_version) return;
+    const result = await updateApi.upgradeChannel("yunmell", yunmellStatus.latest_version);
+    if (result.source_url) window.open(result.source_url, "_blank", "noopener,noreferrer");
+  }, [yunmellStatus]);
 
   const pollProgress = useCallback(async (taskId: string) => {
     try {
@@ -333,13 +356,9 @@ export default function UpdateConfig() {
             <span className={styles.panelTitleIcon}>
               <Sparkles size={16} />
             </span>
-            <h3 className={styles.panelTitle}>
-              {t("advancedSettings.update.panelTitle")}
-            </h3>
+            <h3 className={styles.panelTitle}>OpenOct/Octop 官方更新</h3>
           </div>
-          <p className={styles.panelDesc}>
-            {t("advancedSettings.update.panelDesc")}
-          </p>
+          <p className={styles.panelDesc}>官方 PyPI 版本线，和云迈自研 Release 独立检查、比较和升级。</p>
 
           <div className={styles.stableOnlyRow}>
             <Switch
@@ -583,6 +602,38 @@ export default function UpdateConfig() {
               ]}
             />
           )}
+        </section>
+
+        <section className={styles.panel} aria-label="云迈自研更新">
+          <div className={styles.panelTitleRow}>
+            <span className={styles.panelTitleIcon}><Sparkles size={16} /></span>
+            <h3 className={styles.panelTitle}>云迈自研更新</h3>
+          </div>
+          <p className={styles.panelDesc}>云迈智能体自己的 Release 更新，与 OpenOct/Octop 官方更新独立比较和发布。</p>
+          <div className={styles.versionGrid}>
+            <div className={styles.versionCard}>
+              <span className={styles.versionLabel}>云迈当前版本</span>
+              <span className={styles.versionValue}>{yunmellStatus?.current_version ?? "—"}</span>
+            </div>
+            <div className={styles.versionCard}>
+              <span className={styles.versionLabel}>云迈最新版本</span>
+              <span className={styles.versionValue}>{yunmellStatus?.latest_version ?? "尚未检查"}</span>
+              <div className={styles.versionBadges}>
+                {yunmellStatus?.latest_is_prerelease && <span className={styles.betaBadge}>测试版</span>}
+                {yunmellStatus?.has_update && <span className={styles.badge}>有新版本</span>}
+              </div>
+            </div>
+          </div>
+          {yunmellStatus?.error && <div className={`${styles.alert} ${styles.alertError}`}><XCircle size={15} /><span>{yunmellStatus.error}</span></div>}
+          {yunmellStatus?.source && <div className={`${styles.alert} ${styles.alertInfo}`}><Info size={15} /><span>来源：{yunmellStatus.source}</span></div>}
+          <div className={styles.actions}>
+            <button type="button" className={styles.btnSecondary} onClick={() => void handleYunmellCheck()} disabled={yunmellChecking || upgrading}>
+              <RefreshCw size={14} className={yunmellChecking ? styles.spinning : undefined} />
+              {yunmellChecking ? "检查中" : "检查云迈更新"}
+            </button>
+            {yunmellStatus?.has_update && <button type="button" className={styles.btnPrimary} onClick={() => void handleYunmellUpgrade()}>打开云迈 Release</button>}
+          </div>
+          {yunmellStatus?.release_notes && <Collapse className={styles.releaseNotes} items={[{ key: "yunmell-notes", label: "云迈更新说明", children: <Markdown content={yunmellStatus.release_notes} /> }]} />}
         </section>
 
         <UpgradeGuide />
