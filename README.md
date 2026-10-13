@@ -577,3 +577,37 @@ Thanks to all contributors:
 <a href="https://github.com/tencentcloud/octop/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=tencentcloud/octop" />
 </a>
+<p align="center">
+  <img src="dashboard/public/logo_horizontal_dark.svg" alt="云迈智能体 Logo" width="300" />
+</p>
+
+<h1 align="center">云迈智能体</h1>
+
+<p align="center">
+  面向企业私有化部署的智能体平台：云端管理账号、权限、模型和企业知识库，桌面端在本机运行专家、对话、文件和个人知识库。
+</p>
+
+## 云迈智能体
+
+云迈智能体基于 [TencentCloud/Octop](https://github.com/TencentCloud/Octop) 开发，保留 Octop 的专家、通道、技能、记忆、浏览器和桌面运行能力，并增加企业私有化管理能力。
+
+云迈企业能力包括：
+
+- 单企业服务地址、公开注册、注册审核/免审和管理员成员管理；
+- 角色权限、默认团队、企业默认模型、配额和本机工具策略；
+- 企业共享知识库与个人本地知识库分离；
+- 企业控制面与桌面本地运行端分离，个人消息、文件和运行数据默认留在本机；
+- 官方 Octop 更新与云迈自研更新分开显示，桌面客户端支持客户端内更新。
+
+普通用户通过企业服务地址注册或登录，审核通过后自动继承企业默认模型；个人知识库复用 Octop 原版的本地向量模型和 OCR 能力。企业管理员维护企业成员、策略、默认模型和企业共享知识库。
+
+当前云迈版本、桌面客户端和管理端的发布信息见 [GitHub Releases](https://github.com/lieren2012/Yunmell-Agent/releases)。官方基线、云迈版本和更新源保持独立；上游 Octop 的原版说明和文档继续保留在下方。
+
+## Yunmell Agent — English summary
+
+Yunmell Agent is an enterprise private-deployment layer built on [TencentCloud/Octop](https://github.com/TencentCloud/Octop). The control plane manages accounts, approval, roles, policies, models, quotas and shared enterprise knowledge bases, while the desktop client runs experts, chats, files and personal knowledge bases locally. Official Octop updates and Yunmell releases use separate version tracks.
+
+## Upstream Octop original documentation
+
+The original Octop overview, features, architecture, installation and license information remain below. Yunmell additions above describe the enterprise layer and do not modify the upstream Octop repository.
+
