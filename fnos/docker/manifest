@@ -1,5 +1,5 @@
 appname=octop
-version=1.0.10b10
+version=1.0.10b11
 display_name=云迈智能体
 desc=云迈智能体企业级私有化智能体平台（Docker 版），支持多用户、团队与角色权限管理、统一模型与 Provider 管理、Web 控制台、CLI、IM 渠道与定时任务，数据全部本地存储。<br/><br/><strong>安装后使用：</strong><br/>首次会从 ghcr.io 下载与本包版本对应的镜像（设备需能访问 GitHub Container Registry），请等到应用中心显示「运行中」再点「打开」，或访问 http://设备IP:8088，用安装向导里设置的账号登录。<br/>忘记密码可到云迈智能体数据目录查看 octop-login.txt 备份（技术路径保持兼容；仅记录安装或应用「设置」改密；网页改密后不会自动更新）。<br/><br/><strong>首次登录后：</strong><br/>请在控制台「设置 → 模型」配置 API Key，并按需配置 IM 渠道、远程桌面、浏览器等。<br/><br/>注意：Docker 版通过容器部署，镜像地址继续使用兼容路径 ghcr.io/tencentcloud/octop，并拉取与本包版本相同的镜像。
 source=thirdparty
