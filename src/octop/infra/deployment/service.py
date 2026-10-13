@@ -180,4 +180,5 @@ def session_context(server: Any, user: Any) -> dict[str, Any]:
         "resource_policy": {key: policies.get(key) for key in ["token_quota", "max_agents"]},
         "allowed_models": allowed,
         "local_permissions": local_permissions,
+        "local_permissions_version": 1,
     }

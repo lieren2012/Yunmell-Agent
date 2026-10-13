@@ -204,6 +204,20 @@ def install(app: Any, server: Any) -> None:
             if is_jwt_exempt_request(request) and path != "/api/auth/deployment/session":
                 return await call_next(request)
             user = authenticate_request(request, server)
+            if (
+                path in {"/api/auth/me", "/api/auth/deployment/session"}
+                and request.method == "GET"
+                and client.identity_refresh_needed(user.id)
+            ):
+                # A stale or missing snapshot must be refreshed before the
+                # dashboard mounts.  This is the one protected request that
+                # may wait briefly for the control plane; local runtime APIs
+                # continue to use the cached projection and stay offline-first.
+                try:
+                    await client.validate(user.id)
+                except OctopError as error:
+                    if error.code in {ErrorCode.AUTH_FAILED, ErrorCode.USER_DISABLED}:
+                        raise
             # Identity and deployment policy are refreshed on a soft TTL in
             # the background.  Local runtime APIs must never wait for a
             # control-plane /auth/me or /auth/deployment/session request.

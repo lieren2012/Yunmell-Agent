@@ -32,3 +32,23 @@ def test_explicit_local_permissions_are_separate_from_management_permissions() -
     profile = {"role": "admin", "permissions": ["users", "providers", "terminal"]}
     context = {"local_permissions": ["terminal"]}
     assert DesktopIdentityBridge.local_permissions(profile, context) == ["terminal"]
+
+
+def test_regular_user_legacy_empty_policy_falls_back_to_profile_permissions() -> None:
+    """b11 sent an empty local policy while retaining module permissions in /auth/me."""
+    profile = {
+        "role": "user",
+        "permissions": ["channels", "skill_packages", "knowledge_bases"],
+    }
+    assert DesktopIdentityBridge.local_permissions(profile, {"local_permissions": []}) == [
+        "channels",
+        "skill_packages",
+        "knowledge_bases",
+    ]
+
+
+def test_explicit_empty_policy_version_keeps_user_restricted() -> None:
+    profile = {"role": "user", "permissions": ["channels", "skill_packages"]}
+    assert DesktopIdentityBridge.local_permissions(
+        profile, {"local_permissions": [], "local_permissions_version": 1}
+    ) == []

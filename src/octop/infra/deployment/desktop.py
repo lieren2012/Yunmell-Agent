@@ -346,6 +346,29 @@ class DesktopIdentityBridge:
         }
         return profile, context
 
+    def _sync_local_projection(
+        self, local_id: int, profile: dict[str, Any], context: dict[str, Any]
+    ) -> None:
+        """Apply a trusted remote projection before permission-gated routing.
+
+        The desktop JWT identifies a passwordless local row.  Older clients
+        could keep a cached ``User`` object with empty permissions even after
+        the control plane had granted channels, skills, or knowledge access.
+        Refreshing the encrypted snapshot alone was insufficient because
+        ``current_user`` resolves the in-memory row before middleware runs.
+        Keep the row and the manager cache aligned whenever a snapshot is
+        served.
+        """
+        row = self.server.services.user_repo.get(local_id)
+        if row is None:
+            return
+        permissions = self.local_permissions(profile, context)
+        role = "admin" if profile.get("role") == "admin" else "user"
+        if row.role != role or sorted(row.permissions) != sorted(permissions):
+            DeploymentRepo(self.server.services.db).update_profile(local_id, profile)
+            self.server.services.user_repo.set_permissions(local_id, permissions)
+        self.cache_user(local_id)
+
     async def _background_refresh(self, local_id: int) -> None:
         try:
             await self.validate(local_id)
@@ -396,11 +419,16 @@ class DesktopIdentityBridge:
             self._schedule_refresh(local_id)
             return profile, context
         profile, context, refreshed_at = snapshot
+        self._sync_local_projection(local_id, profile, context)
         if time.time() - refreshed_at >= IDENTITY_SNAPSHOT_TTL_SECONDS:
             self._schedule_refresh(local_id)
         if local_id in self._offline_users:
             context = {**context, "offline": True}
         return profile, context
+
+    def identity_refresh_needed(self, local_id: int) -> bool:
+        snapshot = self._load_snapshot(local_id)
+        return snapshot is None or time.time() - snapshot[2] >= IDENTITY_SNAPSHOT_TTL_SECONDS
 
     @staticmethod
     def local_permissions(profile: dict[str, Any], context: dict[str, Any]) -> list[str]:
@@ -413,12 +441,21 @@ class DesktopIdentityBridge:
         still allowing a newer service to send a narrowed non-empty list.
         """
         explicit = context.get("local_permissions")
+        policy_version = context.get("local_permissions_version")
         if (
             isinstance(explicit, list)
             and all(isinstance(key, str) for key in explicit)
+            and explicit
             and (profile.get("role") != "admin" or explicit)
         ):
             return list(dict.fromkeys(explicit))
+        if (
+            isinstance(explicit, list)
+            and not explicit
+            and policy_version == 1
+            and profile.get("role") != "admin"
+        ):
+            return []
         if profile.get("role") == "admin":
             return sorted(ALL_PERMISSION_KEYS)
         permissions = profile.get("permissions")
