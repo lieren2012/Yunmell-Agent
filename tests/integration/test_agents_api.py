@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from octop.api.deps import resolve_user_from_token
+from octop.api.routers.chat.models import ChatTurnBody
+from octop.api.routers.chat.turn import prepare_dashboard_turn
+from octop.infra.errors import ErrorCode, OctopError
+
 
 @pytest.fixture
 async def env(env_with_provider):
@@ -125,6 +130,31 @@ async def test_start_stop(env):
     running = next(a for a in final_rows if a["agent_id"] == agent_id)
     assert running["state"] == "running"
     assert running["running"] is True
+
+
+async def test_disabled_expert_is_rejected_by_chat_gate(env):
+    """The chat boundary uses the same live runtime fact as the expert card."""
+    c, srv, auth = env
+    created = await c.post(
+        "/api/agents",
+        headers=auth,
+        json={"name": "chat-gate", "config": {}},
+    )
+    assert created.status_code == 201, created.text
+    agent_id = created.json()["agent_id"]
+    stopped = await c.post(f"/api/agents/{agent_id}/stop", headers=auth)
+    assert stopped.status_code == 204
+
+    token = auth["Authorization"].split(" ", 1)[1]
+    user = resolve_user_from_token(srv, token)
+    with pytest.raises(OctopError) as exc_info:
+        await prepare_dashboard_turn(
+            srv,
+            agent_id=agent_id,
+            user=user,
+            turn=ChatTurnBody(text="hello"),
+        )
+    assert exc_info.value.code is ErrorCode.AGENT_NOT_RUNNING
 
 
 async def test_status_endpoint(env):
