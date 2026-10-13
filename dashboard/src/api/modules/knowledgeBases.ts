@@ -36,6 +36,40 @@ export interface KnowledgeCapability {
       provider_ready: boolean;
     };
   };
+  /**
+   * Per-desktop local capability for personal libraries.  This is deliberately
+   * separate from the enterprise feature switch: an administrator may leave
+   * the shared/enterprise index disabled while users still use local ONNX.
+   * Older servers omit this field and the dashboard falls back conservatively.
+   */
+  personal_local?: {
+    backend?: "onnx" | "remote";
+    model?: string | null;
+    selected_model?: string | null;
+    downloaded?: boolean;
+    deps_available?: boolean;
+    usable?: boolean;
+    prerequisites_ok?: boolean;
+    download_required?: boolean;
+    checks?: {
+      model_selected?: boolean;
+      model_downloaded?: boolean;
+      deps_available?: boolean;
+      provider_ready?: boolean;
+    };
+    ocr?: {
+      enabled?: boolean;
+      backend?: "onnx" | "remote";
+      model?: string | null;
+      deps_available?: boolean;
+      usable?: boolean;
+      prerequisites_ok?: boolean;
+      checks?: {
+        deps_available?: boolean;
+        provider_ready?: boolean;
+      };
+    };
+  };
   limits?: KnowledgeLimits;
 }
 
@@ -247,6 +281,16 @@ export const knowledgeBasesApi = {
     request<KnowledgeOnnxDownloadState>(
       "/knowledge-bases/onnx-download-status",
     ),
+
+  installPersonalOcr: () =>
+    request<{
+      status: string;
+      ready: boolean;
+      backend: "onnx";
+      model: "rapidocr";
+    }>("/knowledge-bases/personal-ocr-install", {
+      method: "POST",
+    }),
 
   testOnnx: (model: string) =>
     request<{

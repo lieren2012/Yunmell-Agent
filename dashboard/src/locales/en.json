@@ -356,6 +356,11 @@
   "knowledgeBases": {
     "title": "Knowledge Bases",
     "subtitle": "Index documents for chat retrieval. Optionally share them with users on this instance.",
+    "personal": "My knowledge bases",
+    "enterprise": "Enterprise knowledge bases",
+    "enterpriseModelStatus": "Enterprise model managed by an administrator",
+    "personalModelReady": "Local model ready · {{model}}",
+    "personalModelPending": "Local model needs setup · {{model}}",
     "featureTitle": "Enable Knowledge Bases",
     "settingsTitle": "Knowledge base settings",
     "settingsLead": "Instance-wide switch. When on, configure an embedding model. When off, knowledge bases are unavailable for everyone.",
@@ -550,7 +555,17 @@
     "enable": "Enable",
     "featureEnabled": "Knowledge bases enabled",
     "featureDisabled": "Knowledge bases disabled",
-    "featureSaveFailed": "Failed to update knowledge base feature"
+    "featureSaveFailed": "Failed to update knowledge base feature",
+    "personalLocalTitle": "Personal knowledge base uses a local model",
+    "personalLocalNeedModel": "Local ONNX model {{model}} is not downloaded yet. Download it to upload, index, and search documents on this device.",
+    "personalLocalNotReady": "Local ONNX model {{model}} is downloaded, but its runtime is not enabled yet. Enable it to keep document processing on this device.",
+    "enableLocalModel": "Enable local model",
+    "localModelEnabling": "Enabling local model…",
+    "localModelEnabled": "Local model enabled",
+    "localModelEnableFailed": "Failed to enable local model",
+    "localModelBusy": "The local model is being prepared. Please wait…",
+    "personalOcrReady": "Local RapidOCR is ready for images and scanned PDFs.",
+    "personalOcrOptional": "Local RapidOCR for images and scanned PDFs can be installed when needed; text and normal PDFs are unaffected."
   },
   "setupWizard": {
     "title": "Setup Wizard",

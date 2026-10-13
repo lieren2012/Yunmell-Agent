@@ -356,6 +356,11 @@
   "knowledgeBases": {
     "title": "知识库",
     "subtitle": "上传文档建立索引，在对话中检索引用；可按需共享给同实例用户。",
+    "personal": "我的知识库",
+    "enterprise": "企业知识库",
+    "enterpriseModelStatus": "企业模型由管理员管理",
+    "personalModelReady": "本地模型已就绪 · {{model}}",
+    "personalModelPending": "本地模型待准备 · {{model}}",
     "featureTitle": "启用知识库",
     "settingsTitle": "知识库设置",
     "settingsLead": "实例级开关。启用后需配置向量模型；关闭后全实例不可使用知识库。",
@@ -550,7 +555,17 @@
     "enable": "启用",
     "featureEnabled": "知识库已启用",
     "featureDisabled": "知识库已停用",
-    "featureSaveFailed": "更新知识库功能失败"
+    "featureSaveFailed": "更新知识库功能失败",
+    "personalLocalTitle": "个人知识库使用本地模型",
+    "personalLocalNeedModel": "本地 ONNX 模型 {{model}} 尚未下载。下载完成后即可在本机上传、索引和检索文档。",
+    "personalLocalNotReady": "本地 ONNX 模型 {{model}} 已下载，但运行时尚未启用。启用后文档会留在本机处理。",
+    "enableLocalModel": "启用本地模型",
+    "localModelEnabling": "正在启用本地模型…",
+    "localModelEnabled": "本地模型已启用",
+    "localModelEnableFailed": "启用本地模型失败",
+    "localModelBusy": "本地模型正在准备，请稍候…",
+    "personalOcrReady": "本地 RapidOCR 已就绪，可识别图片和扫描 PDF。",
+    "personalOcrOptional": "图片和扫描 PDF 的本地 RapidOCR 可按需安装；文本和普通 PDF 不受影响。"
   },
   "setupWizard": {
     "title": "设置向导",

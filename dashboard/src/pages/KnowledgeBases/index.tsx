@@ -123,6 +123,7 @@ import {
   isEditableKnowledgeDocument,
   isKnowledgeMarkdownDocument,
 } from "../../utils/knowledgeDocPreview";
+import { resolvePersonalReadiness } from "./personalReadiness";
 import TextDocumentEditorModal, {
   type TextDocumentFormat,
 } from "./TextDocumentEditorModal";
@@ -279,6 +280,90 @@ function ReadinessRow({
         {ok ? okText : failText}
       </Typography.Text>
     </div>
+  );
+}
+
+function PersonalReadinessCard({
+  readiness,
+  modelOptions,
+  onDownload,
+  onActivate,
+  onOpenSettings,
+}: {
+  readiness: ReturnType<typeof resolvePersonalReadiness>;
+  modelOptions: KnowledgeOnnxModel[];
+  onDownload: (modelId: string) => void;
+  onActivate: (modelId: string) => void;
+  onOpenSettings?: () => void;
+}) {
+  const { t } = useTranslation();
+  const selectedModel = readiness.model || modelOptions[0]?.id || null;
+  const selectedEntry = selectedModel
+    ? modelOptions.find((model) => model.id === selectedModel)
+    : undefined;
+  return (
+    <Alert
+      className={styles.personalReadiness}
+      type="warning"
+      showIcon
+      message={t("knowledgeBases.personalLocalTitle")}
+      description={
+        <div className={styles.personalReadinessBody}>
+          <Typography.Text>
+            {readiness.downloaded
+              ? t("knowledgeBases.personalLocalNotReady", {
+                  model: selectedModel || t("knowledgeBases.localOnnx"),
+                })
+              : t("knowledgeBases.personalLocalNeedModel", {
+                  model: selectedModel || t("knowledgeBases.localOnnx"),
+                })}
+          </Typography.Text>
+          <div className={styles.personalReadinessActions}>
+            {readiness.canDownload && selectedModel ? (
+              <Button
+                size="small"
+                type="primary"
+                icon={<Download size={13} />}
+                onClick={() => onDownload(selectedModel)}
+              >
+                {t("knowledgeBases.downloadModel")}
+                {selectedEntry?.size_gb
+                  ? ` · ${formatSizeGb(selectedEntry.size_gb)}`
+                  : ""}
+              </Button>
+            ) : null}
+            {readiness.canActivate && selectedModel ? (
+              <Button
+                size="small"
+                type="primary"
+                icon={<Check size={13} />}
+                onClick={() => onActivate(selectedModel)}
+              >
+                {t("knowledgeBases.enableLocalModel")}
+              </Button>
+            ) : null}
+            {!selectedModel && onOpenSettings ? (
+              <Button size="small" onClick={onOpenSettings}>
+                {t("knowledgeBases.settingsTitle")}
+              </Button>
+            ) : null}
+            {readiness.downloadInProgress ? (
+              <Typography.Text type="secondary">
+                {t("knowledgeBases.localModelBusy")}
+              </Typography.Text>
+            ) : null}
+          </div>
+          <Typography.Text
+            type="secondary"
+            className={styles.personalReadinessHint}
+          >
+            {readiness.ocrUsable
+              ? t("knowledgeBases.personalOcrReady")
+              : t("knowledgeBases.personalOcrOptional")}
+          </Typography.Text>
+        </div>
+      }
+    />
   );
 }
 
@@ -697,8 +782,40 @@ export default function KnowledgeBasesPage() {
     selected && !selected.read_only && canManageKnowledgeBase(selected, user),
   );
   const canWriteSelected = canManageSelected;
-  const usable = Boolean(capability?.usable);
-  const supportedDocumentTypes = capability?.ocr?.usable
+  const personalReadiness = useMemo(
+    () =>
+      resolvePersonalReadiness(
+        capability,
+        catalog,
+        onnxDownloading
+          ? {
+              status: "downloading",
+              progress: downloadProgress / 100,
+              model_name: downloadProgressModel,
+            }
+          : null,
+      ),
+    [
+      capability,
+      catalog,
+      downloadProgress,
+      downloadProgressModel,
+      onnxDownloading,
+    ],
+  );
+  // The enterprise feature switch only gates the shared index.  Personal
+  // libraries use the local ONNX readiness reported by the desktop runtime.
+  const usable =
+    libraryScope === "personal"
+      ? personalReadiness.usable
+      : Boolean(capability?.usable);
+  const selectedUsable = selected?.read_only
+    ? Boolean(capability?.usable)
+    : personalReadiness.usable;
+  const selectedOcrUsable = selected?.read_only
+    ? Boolean(capability?.ocr?.usable)
+    : personalReadiness.ocrUsable;
+  const supportedDocumentTypes = selectedOcrUsable
     ? `${BASE_DOCUMENT_TYPES},${OCR_DOCUMENT_TYPES}`
     : BASE_DOCUMENT_TYPES;
   const limits = capability?.limits ?? DEFAULT_KNOWLEDGE_LIMITS;
@@ -789,7 +906,7 @@ export default function KnowledgeBasesPage() {
   }, [t]);
 
   const loadEmbeddingOptions = useCallback(
-    async (allOnnx = false) => {
+    async (allOnnx = false, silent = false) => {
       if (allOnnx) {
         setOnnxExpanding(true);
       } else {
@@ -807,16 +924,18 @@ export default function KnowledgeBasesPage() {
         }
         return options;
       } catch (error) {
-        message.error(
-          apiErrorMessage(error, t("knowledgeBases.loadFailed"), t),
-        );
+        if (!silent) {
+          message.error(
+            apiErrorMessage(error, t("knowledgeBases.loadFailed"), t),
+          );
+        }
         return undefined;
       } finally {
         setFeatureOptionsLoading(false);
         setOnnxExpanding(false);
       }
     },
-    [t],
+    [message, t],
   );
 
   const loadOcrOptions = useCallback(async () => {
@@ -828,7 +947,7 @@ export default function KnowledgeBasesPage() {
       message.error(apiErrorMessage(error, t("knowledgeBases.loadFailed"), t));
       return undefined;
     }
-  }, [t]);
+  }, [message, t]);
 
   const stopOnnxDownloadWatch = useCallback(() => {
     if (onnxDownloadTimer.current) {
@@ -865,6 +984,7 @@ export default function KnowledgeBasesPage() {
       if (status === "done") {
         try {
           await knowledgeBasesApi.activateOnnx(modelId);
+          await loadCapability();
           message.success(t("knowledgeBases.onnxServiceEnabled"));
         } catch (activateError) {
           message.success(t("models.onnxDownloadDone", { model: modelId }));
@@ -880,7 +1000,7 @@ export default function KnowledgeBasesPage() {
       }
       message.error(error || t("models.onnxDownloadFailed"));
     },
-    [loadEmbeddingOptions, stopOnnxDownloadWatch, t],
+    [loadCapability, loadEmbeddingOptions, message, stopOnnxDownloadWatch, t],
   );
 
   const watchOnnxDownloadStatus = useCallback(
@@ -936,7 +1056,9 @@ export default function KnowledgeBasesPage() {
       try {
         if (libraryScope === "enterprise") {
           const base = await knowledgeBasesApi.getEnterprise(id);
-          const nextDocuments = await knowledgeBasesApi.listEnterpriseDocuments(id);
+          const nextDocuments = await knowledgeBasesApi.listEnterpriseDocuments(
+            id,
+          );
           if (!detailRequestGate.current.isCurrent(requestId)) return;
           setSelected(base);
           setDocuments(nextDocuments);
@@ -970,7 +1092,7 @@ export default function KnowledgeBasesPage() {
         }
       }
     },
-    [libraryScope, t],
+    [libraryScope, message, t],
   );
 
   useEffect(() => {
@@ -982,6 +1104,14 @@ export default function KnowledgeBasesPage() {
       setLoading(false),
     );
   }, [loadBases, loadCapability]);
+
+  // Personal users still need the local model catalog to download/activate
+  // ONNX.  Older servers may return 403 here; keep that failure silent and
+  // leave the document UI usable for already-indexed text libraries.
+  useEffect(() => {
+    if (canConfigureKb || libraryScope !== "personal") return;
+    void loadEmbeddingOptions(false, true);
+  }, [canConfigureKb, libraryScope, loadEmbeddingOptions]);
 
   useEffect(() => {
     if (libraryScope === "enterprise" && canUseKnowledge) {
@@ -1350,13 +1480,33 @@ export default function KnowledgeBasesPage() {
     });
   };
 
+  const activatePersonalOnnx = async (modelId: string) => {
+    setOnnxDownloading(true);
+    setDownloadProgressModel(modelId);
+    setDownloadProgressLabel(t("knowledgeBases.localModelEnabling"));
+    setDownloadProgressOpen(true);
+    try {
+      await knowledgeBasesApi.activateOnnx(modelId);
+      await loadCapability();
+      setDownloadProgressOpen(false);
+      message.success(t("knowledgeBases.localModelEnabled"));
+    } catch (error) {
+      setDownloadProgressOpen(false);
+      message.error(
+        apiErrorMessage(error, t("knowledgeBases.localModelEnableFailed"), t),
+      );
+    } finally {
+      setOnnxDownloading(false);
+    }
+  };
+
   const dismissDownloadProgressToBackground = () => {
     setDownloadProgressOpen(false);
     message.info(t("models.localDownloadBackground"));
   };
 
   const uploadDocuments = async (files: FileList | File[] | null) => {
-    if (!selected || !files || !usable || isAtDocumentLimit) return;
+    if (!selected || !files || !selectedUsable || isAtDocumentLimit) return;
     const remaining = Math.max(
       0,
       (selected?.max_documents ?? limits.max_docs_per_kb) - fileCount,
@@ -1430,7 +1580,7 @@ export default function KnowledgeBasesPage() {
   };
 
   const canDropUpload =
-    canWriteSelected && usable && !isAtDocumentLimit && !uploadState;
+    canWriteSelected && selectedUsable && !isAtDocumentLimit && !uploadState;
 
   const resetDragActive = () => {
     dragDepthRef.current = 0;
@@ -1587,7 +1737,9 @@ export default function KnowledgeBasesPage() {
           if (abort.signal.aborted) return;
           setPreviewFilename(preview.filename);
           setPreviewText(
-            preview.text.trim() ? preview.text : t("knowledgeBases.previewEmpty"),
+            preview.text.trim()
+              ? preview.text
+              : t("knowledgeBases.previewEmpty"),
           );
           return;
         }
@@ -1602,7 +1754,10 @@ export default function KnowledgeBasesPage() {
         );
       } else {
         const preview = selected.read_only
-          ? await knowledgeBasesApi.previewEnterpriseDocument(selected.id, document.id)
+          ? await knowledgeBasesApi.previewEnterpriseDocument(
+              selected.id,
+              document.id,
+            )
           : await knowledgeBasesApi.previewDocument(selected.id, document.id);
         if (abort.signal.aborted) return;
         setPreviewFilename(preview.filename);
@@ -2332,6 +2487,21 @@ export default function KnowledgeBasesPage() {
                           name: formatKnowledgeOwner(selected),
                         })}
                       </Typography.Text>
+                      <Tag color={selected.read_only ? "blue" : "green"}>
+                        {selected.read_only
+                          ? t("knowledgeBases.enterprise")
+                          : t("knowledgeBases.personal")}
+                      </Tag>
+                      <Tag color={selectedUsable ? "success" : "warning"}>
+                        {selected.read_only
+                          ? t("knowledgeBases.enterpriseModelStatus")
+                          : t(
+                              selectedUsable
+                                ? "knowledgeBases.personalModelReady"
+                                : "knowledgeBases.personalModelPending",
+                              { model: personalReadiness.model || "ONNX" },
+                            )}
+                      </Tag>
                     </div>
                   </div>
 
@@ -2344,13 +2514,15 @@ export default function KnowledgeBasesPage() {
                     onDragOver={handleDocsDragOver}
                     onDrop={handleDocsDrop}
                   >
-                    {!selected.read_only && !usable ? (
-                      <Alert
-                        type="warning"
-                        showIcon
-                        message={t(
-                          "knowledgeBases.unavailableDescriptionNonAdmin",
-                        )}
+                    {!selected.read_only && !selectedUsable ? (
+                      <PersonalReadinessCard
+                        readiness={personalReadiness}
+                        modelOptions={catalog}
+                        onDownload={startOnnxDownload}
+                        onActivate={activatePersonalOnnx}
+                        onOpenSettings={
+                          canConfigureKb ? openSettings : undefined
+                        }
                       />
                     ) : null}
                     {selected.read_only ? (
@@ -2441,7 +2613,7 @@ export default function KnowledgeBasesPage() {
                             icon={<FileUp size={14} />}
                             loading={Boolean(uploadState)}
                             disabled={
-                              !usable ||
+                              !selectedUsable ||
                               isAtDocumentLimit ||
                               Boolean(uploadState)
                             }
@@ -2499,7 +2671,7 @@ export default function KnowledgeBasesPage() {
                           className={styles.uploadHint}
                         >
                           {t(
-                            capability?.ocr?.usable
+                            selectedOcrUsable
                               ? "knowledgeBases.uploadHintOcr"
                               : "knowledgeBases.uploadHint",
                             {
