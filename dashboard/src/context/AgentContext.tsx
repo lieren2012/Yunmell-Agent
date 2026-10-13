@@ -13,6 +13,7 @@ import {
   retainDisconnectedBridgeAgents,
   toBridgeShadowAgentId,
 } from "../utils/remoteExpert";
+import { isAgentChatReady } from "../utils/agentError";
 
 /**
  * Multi-Agent navigation state.
@@ -44,6 +45,11 @@ export interface OctopAgent {
   system_prompt: string | null;
   template_name: string | null;
   state: "running" | "stopped" | "failed" | "starting" | "stopping" | string;
+  /** Whether the persisted agent row is enabled. The runtime ``running``
+   * projection below is the source of truth for chat readiness. */
+  enabled?: boolean;
+  /** Live harness projection returned by the agents API. */
+  running?: boolean;
   last_error: string | null;
   icon: string | null;
   icon_name: string | null;
@@ -131,7 +137,7 @@ export function selectEnabledExperts(
 ): OctopAgent[] {
   const { pinActive = false } = options;
   const enabled = agents.filter(
-    (a) => a.state === "running" || Boolean(a.bridge_disconnected),
+    (a) => isAgentChatReady(a.state, a) || Boolean(a.bridge_disconnected),
   );
   if (!pinActive || !resolvedAgentId) return enabled;
   if (enabled.some((a) => a.agent_id === resolvedAgentId)) return enabled;
@@ -380,6 +386,9 @@ export function AgentProvider({ children }: { children: ReactNode }) {
               return (
                 a.agent_id === b.agent_id &&
                 a.state === b.state &&
+                a.enabled === b.enabled &&
+                a.running === b.running &&
+                a.last_error === b.last_error &&
                 a.unread_count === b.unread_count &&
                 a.bootstrap_pending === b.bootstrap_pending &&
                 a.name === b.name &&

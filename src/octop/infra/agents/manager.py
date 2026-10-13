@@ -1050,6 +1050,39 @@ class AgentManager:
         """Look up an agent row by its public agent_id (ULID). Returns None if absent."""
         return self._repos.agent_repo.get(agent_id)
 
+    def runtime_state(self, agent_id: str, row: AgentRow | None = None) -> str:
+        """Return the state that the running application can actually serve.
+
+        ``last_state`` is persisted so the next boot knows which agents to
+        restore, but it can briefly outlive the in-memory harness entry (for
+        example during a reload, or after an unclean process exit).  API
+        callers use this projection for both the expert list and chat gates;
+        otherwise the card can say ``running`` while the first chat turn gets
+        ``AGENT_NOT_RUNNING``.
+
+        A lifecycle lock indicates a reload/start currently in progress.  In
+        that short window expose ``starting`` instead of claiming that the
+        agent is ready.  A persisted ``running`` row with no live entry and no
+        lifecycle operation is a stopped runtime and is reported as such.
+        Failed rows keep their persisted error state so the caller can show
+        the real startup failure reason.
+        """
+        if row is None:
+            row = self.get_row(agent_id)
+        if row is None:
+            return "unknown"
+        persisted = str(row.last_state or "unknown").strip().lower() or "unknown"
+        if self._harness_manager is None:
+            return persisted
+        if self._octop_harness_or_none(agent_id) is not None:
+            return "running"
+        if persisted == "running":
+            lock = self._agent_lifecycle_locks.get(agent_id)
+            if lock is not None and lock.locked():
+                return "starting"
+            return "stopped"
+        return persisted
+
     def workspace_for_agent(self, agent_id: str) -> Any | None:
         """Return the agent's :class:`BackendWorkspace`.
 

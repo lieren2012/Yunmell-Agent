@@ -82,6 +82,16 @@ describe("selectEnabledExperts", () => {
     expect(selectEnabledExperts(agents, null)).toEqual([]);
   });
 
+  it("uses the live running projection when the persisted state is stale", () => {
+    const agents = [
+      agent("stale", "running", { running: false }),
+      agent("live", "stopped", { running: true }),
+    ];
+    expect(selectEnabledExperts(agents, null).map((a) => a.agent_id)).toEqual([
+      "live",
+    ]);
+  });
+
   it("opt-in pinActive=true still keeps the active stopped expert (API stability)", () => {
     // Pinning is no longer the default — every production caller passes
     // pinActive:false — but the option still exists in case a future

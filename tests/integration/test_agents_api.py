@@ -107,7 +107,24 @@ async def test_start_stop(env):
     assert r.json()["state"] == "running"
 
     rows = (await c.get("/api/agents", headers=auth)).json()
-    assert any(a["agent_id"] == agent_id for a in rows)
+    stopped = next(a for a in rows if a["agent_id"] == agent_id)
+    assert stopped["state"] == "running"
+    assert stopped["running"] is True
+
+    await c.post(f"/api/agents/{agent_id}/stop", headers=auth)
+    stopped_rows = (await c.get("/api/agents", headers=auth)).json()
+    stopped = next(a for a in stopped_rows if a["agent_id"] == agent_id)
+    # The list card and chat gate must share the live runtime projection. A
+    # persisted row that used to say ``running`` must not remain chat-ready
+    # after the harness has been unloaded.
+    assert stopped["state"] == "stopped"
+    assert stopped["running"] is False
+
+    await c.post(f"/api/agents/{agent_id}/start", headers=auth)
+    final_rows = (await c.get("/api/agents", headers=auth)).json()
+    running = next(a for a in final_rows if a["agent_id"] == agent_id)
+    assert running["state"] == "running"
+    assert running["running"] is True
 
 
 async def test_status_endpoint(env):
