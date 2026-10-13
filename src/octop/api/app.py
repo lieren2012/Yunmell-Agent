@@ -214,6 +214,7 @@ def build_app(server: OctopServer) -> FastAPI:
         workspace,
     )
     from octop.api.routers.deployment import admin_router as deployment_admin_router
+    from octop.api.routers.deployment import enterprise_router as deployment_enterprise_router
     from octop.api.routers.deployment import router as deployment_router
     from octop.api.routers.deployment_model import desktop_router as desktop_model_router
     from octop.api.routers.deployment_model import router as deployment_model_router
@@ -235,6 +236,7 @@ def build_app(server: OctopServer) -> FastAPI:
             _RouterMount(deployment_model_router, "/api/auth", ["auth"]),
             _RouterMount(desktop_model_router, "/api/desktop-model", ["auth"]),
             _RouterMount(deployment_admin_router, "/api/admin/enterprise", ["admin"]),
+            _RouterMount(deployment_enterprise_router, "/api/enterprise", ["knowledge"]),
             _RouterMount(auth_oidc.router, "/api/auth", ["auth"]),
             _RouterMount(auth_oauth.router, "/api/auth", ["auth"]),
             _RouterMount(auth_ldap.router, "/api/auth", ["auth"]),

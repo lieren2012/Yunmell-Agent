@@ -186,6 +186,20 @@ class KnowledgeRepo:
             rows = conn.execute("SELECT * FROM knowledge_bases ORDER BY name").fetchall()
         return map_rows(rows, KnowledgeBaseRow)
 
+    def list_shared(self) -> list[KnowledgeBaseRow]:
+        """List enterprise-published metadata rows.
+
+        Personal local bases may also be visible to their owner; the explicit
+        shared flag is the small, backwards-compatible scope marker used by
+        the control-plane projection.  The desktop runtime never mirrors the
+        unshared rows into its personal database.
+        """
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM knowledge_bases WHERE shared = 1 ORDER BY name"
+            ).fetchall()
+        return map_rows(rows, KnowledgeBaseRow)
+
     def count_bases_for_owner(self, owner_user_id: int) -> int:
         with self._db.connect() as conn:
             row = conn.execute(

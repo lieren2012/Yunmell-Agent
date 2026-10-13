@@ -32,7 +32,12 @@ PUBLIC_AUTH = {
     "/api/auth/oidc/status",
     "/api/auth/ldap/status",
 }
-MANAGEMENT = ("/api/admin/", "/api/users", "/api/user-roles")
+MANAGEMENT = (
+    "/api/admin/",
+    "/api/users",
+    "/api/user-roles",
+    "/api/enterprise/knowledge-bases",
+)
 
 
 def cookie_headers(request: Request, server: Any) -> dict[str, str]:

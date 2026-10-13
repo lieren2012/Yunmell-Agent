@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Cookie, Depends, Request, Response
 from pydantic import BaseModel, Field
 
-from octop.api.deps import current_user, get_server, require_permission
+from octop.api.deps import current_user, get_server, require_admin, require_permission
 from octop.api.routers.auth import EnterpriseRegistrationBody, LoginBody, login
 from octop.infra.db.repos.deployment import DeploymentRepo
 from octop.infra.deployment.service import (
@@ -18,10 +18,111 @@ from octop.infra.deployment.service import (
     session_context,
 )
 from octop.infra.errors import ErrorCode, OctopError
+from octop.infra.knowledge.service import KnowledgeService
 from octop.infra.users.identity import User
 
 router = APIRouter()
 admin_router = APIRouter()
+enterprise_router = APIRouter()
+
+
+class EnterpriseKnowledgeBaseBody(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    icon_name: str = Field(default="", max_length=64)
+    max_documents: int = Field(default=100, ge=0, le=10_000)
+
+
+def _enterprise_kb_payload(row: Any) -> dict[str, Any]:
+    """Serialize the control-plane metadata used by desktop projections."""
+    return {
+        "knowledge_base_id": row.id,
+        "name": row.name,
+        "description": row.description,
+        "icon_name": row.icon_name,
+        "embedding_model": row.embedding_model,
+        "embedding_dim": row.embedding_dim,
+        "doc_count": row.doc_count,
+        "max_documents": row.max_documents,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+        "scope": "enterprise",
+        "read_only": True,
+    }
+
+
+def _enterprise_kb(server: Any, kb_id: str) -> Any:
+    row = server.services.knowledge_repo.get_base(kb_id)
+    if row is None or not row.shared:
+        raise OctopError(ErrorCode.NOT_FOUND, "enterprise knowledge base not found", status=404)
+    return row
+
+
+@enterprise_router.get("/knowledge-bases", summary="List enterprise knowledge-base projection")
+async def list_enterprise_knowledge_bases(
+    user: User = Depends(require_permission("knowledge_bases")),
+    server: Any = Depends(get_server),
+) -> list[dict[str, Any]]:
+    del user
+    return [_enterprise_kb_payload(row) for row in server.services.knowledge_repo.list_shared()]
+
+
+@enterprise_router.get("/knowledge-bases/{kb_id}", summary="Read enterprise knowledge-base projection")
+async def get_enterprise_knowledge_base(
+    kb_id: str,
+    _user: User = Depends(require_permission("knowledge_bases")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    return _enterprise_kb_payload(_enterprise_kb(server, kb_id))
+
+
+@enterprise_router.get("/knowledge-bases/{kb_id}/documents", summary="List enterprise knowledge documents")
+async def list_enterprise_knowledge_documents(
+    kb_id: str,
+    prefix: str | None = None,
+    user: User = Depends(require_permission("knowledge_bases")),
+    server: Any = Depends(get_server),
+) -> list[dict[str, Any]]:
+    _enterprise_kb(server, kb_id)
+    service = KnowledgeService(server.services)
+    rows = service.list_documents(kb_id, actor_user_id=user.id, is_admin=False, prefix=prefix)
+    return [
+        {
+            "document_id": row.id,
+            "id": row.id,
+            "kb_id": row.kb_id,
+            "path": row.path,
+            "filename": row.filename,
+            "is_dir": row.is_dir,
+            "content_type": row.content_type,
+            "byte_size": row.byte_size,
+            "content_hash": row.content_hash,
+            "status": row.status,
+            "error_message": row.error_message,
+            "chunk_count": row.chunk_count,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+            "scope": "enterprise",
+            "read_only": True,
+        }
+        for row in rows
+    ]
+
+
+@enterprise_router.get(
+    "/knowledge-bases/{kb_id}/documents/{doc_id}/preview",
+    summary="Preview enterprise knowledge document",
+)
+async def preview_enterprise_knowledge_document(
+    kb_id: str,
+    doc_id: str,
+    user: User = Depends(require_permission("knowledge_bases")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    _enterprise_kb(server, kb_id)
+    service = KnowledgeService(server.services)
+    preview = service.preview_document(kb_id, doc_id, actor_user_id=user.id, is_admin=False)
+    return {**preview, "scope": "enterprise", "read_only": True}
 COOKIE = "yunmell_registration_receipt"
 
 
@@ -142,6 +243,85 @@ async def admin_info(
     _: User = Depends(require_permission("users")), server: Any = Depends(get_server)
 ) -> dict[str, Any]:
     return admin_payload(server)
+
+
+@admin_router.get("/knowledge-bases", summary="List enterprise knowledge bases")
+async def admin_list_enterprise_knowledge_bases(
+    _admin: User = Depends(require_admin()),
+    server: Any = Depends(get_server),
+) -> list[dict[str, Any]]:
+    return [_enterprise_kb_payload(row) for row in server.services.knowledge_repo.list_shared()]
+
+
+@admin_router.post("/knowledge-bases", status_code=201, summary="Create an enterprise knowledge base")
+async def admin_create_enterprise_knowledge_base(
+    body: EnterpriseKnowledgeBaseBody,
+    request: Request,
+    admin: User = Depends(require_admin()),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    try:
+        row = KnowledgeService(server.services).create_base(
+            owner_user_id=admin.id,
+            name=body.name.strip(),
+            description=body.description.strip(),
+            shared=True,
+            icon_name=body.icon_name.strip(),
+            max_documents=body.max_documents,
+        )
+        return _enterprise_kb_payload(row)
+    except (RuntimeError, ValueError) as exc:
+        raise OctopError(
+            ErrorCode.KNOWLEDGE_PREREQUISITES_FAILED,
+            "企业知识库未就绪，请先配置向量模型",
+            details={"reason": str(exc)},
+            status=503,
+        ) from exc
+
+
+@admin_router.patch("/knowledge-bases/{kb_id}", summary="Update an enterprise knowledge base")
+async def admin_update_enterprise_knowledge_base(
+    kb_id: str,
+    body: EnterpriseKnowledgeBaseBody,
+    _admin: User = Depends(require_admin()),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    _enterprise_kb(server, kb_id)
+    try:
+        updated = KnowledgeService(server.services).update_base(
+            kb_id,
+            actor_user_id=_admin.id,
+            name=body.name.strip(),
+            description=body.description.strip(),
+            icon_name=body.icon_name.strip(),
+            max_documents=body.max_documents,
+            is_admin=True,
+        )
+    except (RuntimeError, ValueError, PermissionError) as exc:
+        raise OctopError(ErrorCode.INTERNAL_ERROR, str(exc), status=400) from exc
+    # An admin update must not accidentally convert the enterprise row back
+    # into a personal base through the generic service.
+    if not updated.shared:
+        server.services.knowledge_repo.update_base(kb_id, shared=True)
+    refreshed = server.services.knowledge_repo.get_base(kb_id)
+    if refreshed is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "enterprise knowledge base not found", status=404)
+    return _enterprise_kb_payload(refreshed)
+
+
+@admin_router.delete("/knowledge-bases/{kb_id}", status_code=204, summary="Delete an enterprise knowledge base")
+async def admin_delete_enterprise_knowledge_base(
+    kb_id: str,
+    _admin: User = Depends(require_admin()),
+    server: Any = Depends(get_server),
+) -> None:
+    _enterprise_kb(server, kb_id)
+    try:
+        KnowledgeService(server.services).delete_base(
+            kb_id, actor_user_id=_admin.id, is_admin=True
+        )
+    except (RuntimeError, ValueError, PermissionError) as exc:
+        raise OctopError(ErrorCode.INTERNAL_ERROR, str(exc), status=400) from exc
 
 
 class DeploymentSettings(BaseModel):

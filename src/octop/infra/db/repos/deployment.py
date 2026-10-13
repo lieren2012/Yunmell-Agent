@@ -108,11 +108,12 @@ class DeploymentRepo:
             )
 
     def update_profile(self, local_user_id: int, profile: dict[str, Any]) -> None:
+        role = "admin" if profile.get("role") == "admin" else "user"
         with self.db.transaction() as connection:
             connection.execute(
                 "UPDATE users SET role = ?, display_name = ?, locale = ?, permissions = ?, disabled = 0, approval_status = 'approved' WHERE id = ?",
                 (
-                    "user",
+                    role,
                     profile.get("display_name"),
                     profile.get("locale") or "zh",
                     json.dumps(profile.get("permissions") or []),

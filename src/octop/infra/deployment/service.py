@@ -8,7 +8,7 @@ from typing import Any
 
 from octop.infra.db.repos.deployment import DeploymentRepo
 from octop.infra.errors import ErrorCode, OctopError
-from octop.infra.users.permissions import user_has_permission
+from octop.infra.users.permissions import ALL_PERMISSION_KEYS, user_has_permission
 from octop.infra.users.resource_policy import public_policy_fields
 
 ORG_KEY = "yunmell.deployment.organization"
@@ -149,10 +149,15 @@ def session_context(server: Any, user: Any) -> dict[str, Any]:
         model_error = None
     except OctopError as error:
         metadata, model_error = None, error.message
-    local_permission_keys = {"terminal", "browser", "desktop", "filesystem", "network"}
-    local_permissions = [] if user.is_admin else [
-        key for key in user.permissions if key in local_permission_keys
-    ]
+    # The desktop runtime enforces the same module permission catalog as the
+    # control plane.  Admins must retain the full local catalog (channels,
+    # skill packages, usage, etc.); regular users receive only explicit,
+    # known permissions assigned by the control plane.
+    local_permissions = (
+        sorted(ALL_PERMISSION_KEYS)
+        if user.is_admin
+        else sorted({key for key in user.permissions if key in ALL_PERMISSION_KEYS})
+    )
     policies = public_policy_fields(server.services.user_policy_repo.list_for_user(user.id))
     allowed = []
     if user_has_permission(user, "providers"):

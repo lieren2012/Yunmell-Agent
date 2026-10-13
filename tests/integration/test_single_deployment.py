@@ -27,6 +27,10 @@ async def test_registration_review_cookie_and_existing_user_library(env):
     login = await client.post("/api/auth/deployment/login", json={"username": "review-member", "password": "UiTestPass79"})
     assert login.status_code == 200, login.text
     headers = {"Authorization": "Bearer " + login.json()["access_token"]}
+    context = await client.get("/api/auth/deployment/session", headers=headers)
+    assert context.status_code == 200, context.text
+    assert "channels" in context.json()["local_permissions"]
+    assert "skill_packages" in context.json()["local_permissions"]
     assert (await client.get("/api/admin/providers", headers=headers)).status_code == 403
     assert (await client.get("/api/admin/enterprise/deployment", headers=headers)).status_code == 403
     uid = server.services.user_repo.get_by_username("review-member").id
@@ -115,6 +119,15 @@ async def test_desktop_remote_identity_local_runtime_and_authority_binding(env, 
         assert models.status_code == 200
         assert models.json()[0]["model"] == "yunmell-default"
         monkeypatch.setattr(identity, "remote", remote)
+        enterprise_projection = await local_client.get(
+            "/api/enterprise/knowledge-bases", headers=headers
+        )
+        assert enterprise_projection.status_code == 200, enterprise_projection.text
+        assert (
+            await local_client.get(
+                "/api/enterprise/knowledge-bases/unknown/documents", headers=headers
+            )
+        ).status_code == 404
         assert (await local_client.get("/api/admin/providers", headers=headers)).status_code == 403
         created = await local_client.post("/api/agents", headers=headers, json={"name": "普通用户创建"})
         assert created.status_code == 201, created.text
@@ -157,6 +170,12 @@ async def test_desktop_admin_management_requests_use_remote_admin_identity(env, 
         assert profile.status_code == 200, profile.text
         assert profile.json()["username"] == "admin"
         assert profile.json()["role"] == "admin"
+        local_row = local_server.services.user_repo.get(login.json()["user"]["id"])
+        assert local_row is not None and local_row.role == "admin"
+        context = await local_client.get("/api/auth/deployment/session", headers=headers)
+        assert context.status_code == 200, context.text
+        assert "channels" in context.json()["local_permissions"]
+        assert "skill_packages" in context.json()["local_permissions"]
 
         listed = await local_client.get("/api/users", headers=headers)
         assert listed.status_code == 200, listed.text

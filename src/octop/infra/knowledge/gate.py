@@ -70,10 +70,14 @@ def get_capability(settings_get: SettingsGet, provider_repo: Any = None) -> dict
     deps_available = local_embedding_deps_available()
     model_downloaded = bool(selected_model and is_model_downloaded(selected_model))
     provider_ready = _remote_ready(provider, selected_model)
+    # A missing model is a complete, local configuration state.  Do not load
+    # optional embedding runtimes just to report that no model was selected;
+    # the capability endpoint must remain fast and deterministic on a fresh
+    # install.
     prerequisites_ok = (
         provider_ready
         if backend == "remote"
-        else embedding_prerequisites_ok_for_model(selected_model)
+        else bool(selected_model) and embedding_prerequisites_ok_for_model(selected_model)
     )
     feature_enabled = _as_bool(settings_get(_FEATURE_ENABLED_KEY))
     return {
