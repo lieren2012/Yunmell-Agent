@@ -20,11 +20,15 @@ const (
 
 // Settings is persisted at ~/.octop/desktop-settings.json
 type Settings struct {
-	Locale         Locale `json:"locale"`
-	Autostart      bool   `json:"autostart"`
-	MinimizeToTray bool   `json:"minimizeToTray"`
-	PreventSleep   bool   `json:"preventSleep"`
-	Port           int    `json:"port,omitempty"`
+	Locale    Locale `json:"locale"`
+	Autostart bool   `json:"autostart"`
+	// MinimizeToTray is retained as the JSON/API name for compatibility with
+	// existing settings files. Its behavior is close-to-tray: a title-bar
+	// minimise always remains a normal Windows minimise, while closing the
+	// window may hide it in the tray when this flag is enabled.
+	MinimizeToTray bool `json:"minimizeToTray"`
+	PreventSleep   bool `json:"preventSleep"`
+	Port           int  `json:"port,omitempty"`
 	// ControlPlaneURL selects the remote management/login service. Empty means
 	// the desktop starts and uses its bundled local runtime.
 	ControlPlaneURL   string `json:"controlPlaneUrl,omitempty"`

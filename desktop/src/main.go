@@ -126,6 +126,32 @@ func (a *App) Quit() {
 	a.requestQuit()
 }
 
+type mainWindowCloseBehavior uint8
+
+const (
+	mainWindowCloseToTray mainWindowCloseBehavior = iota
+	mainWindowQuitApplication
+)
+
+func mainWindowCloseBehaviorFor(s Settings) mainWindowCloseBehavior {
+	if s.MinimizeToTray {
+		return mainWindowCloseToTray
+	}
+	return mainWindowQuitApplication
+}
+
+// closeMainWindow applies the user's close policy. Window minimisation is
+// deliberately not handled here: it must remain a native minimise so the
+// window keeps its taskbar button. The flag name is kept for settings-file
+// compatibility, but it now means "hide on close".
+func (a *App) closeMainWindow() {
+	if a.store != nil && mainWindowCloseBehaviorFor(a.store.get()) == mainWindowCloseToTray {
+		a.hideToTray()
+		return
+	}
+	a.requestQuit()
+}
+
 func (a *App) setAutostart(on bool) (bool, error) {
 	if a.app == nil {
 		return false, fmt.Errorf("autostart is unavailable before the application starts")
@@ -202,13 +228,18 @@ func (a *App) boot() {
 	}
 	s := a.store.get()
 	if controlPlaneURL := strings.TrimSpace(s.ControlPlaneURL); controlPlaneURL != "" {
-		a.setStatus("正在检查企业管理端连接…")
-		health, err := waitStartupHealth(locale, controlPlaneURL, "control-plane", 8*time.Second)
-		a.updateStartup(func(state *StartupStatus) { state.ControlPlane = health })
-		if err != nil {
-			a.startupFailed(err.Error())
-			return
-		}
+		// The management service carries identity and policy only.  Probe it in
+		// the background so a slow/offline control plane never prevents the
+		// local runtime and its pages from starting.
+		go func(address string, lang Locale) {
+			health, err := waitStartupHealth(lang, address, "control-plane", 8*time.Second)
+			a.updateStartup(func(state *StartupStatus) {
+				state.ControlPlane = health
+				if err != nil && state.Phase == "ready" {
+					state.Message = "企业管理端暂时离线，本地运行时仍可用"
+				}
+			})
+		}(controlPlaneURL, locale)
 	}
 	a.updateStartup(func(state *StartupStatus) { state.Phase = "local-runtime" })
 	base := dashboardURL(s.Port)
@@ -411,7 +442,7 @@ func main() {
 		win.Minimise()
 	})
 	app.Event.On("desktop:close", func(_ *application.CustomEvent) {
-		api.hideToTray()
+		api.closeMainWindow()
 	})
 	installDragOverlay := func(_ *application.WindowEvent) { api.scheduleDragOverlay() }
 	win.OnWindowEvent(events.Mac.WebViewDidFinishNavigation, installDragOverlay)
@@ -451,13 +482,22 @@ func main() {
 		if quit {
 			return
 		}
-		e.Cancel()
-		api.hideToTray()
-	})
-	win.OnWindowEvent(events.Common.WindowMinimise, func(_ *application.WindowEvent) {
-		if api.store.get().MinimizeToTray {
+		if api.store != nil && mainWindowCloseBehaviorFor(api.store.get()) == mainWindowCloseToTray {
+			e.Cancel()
 			api.hideToTray()
+			return
 		}
+		// The close event is already on the native UI thread. Let the native
+		// close continue and request application shutdown asynchronously; this
+		// avoids re-entering Wails' window-close hook synchronously.
+		api.mu.Lock()
+		api.quitting = true
+		api.mu.Unlock()
+		go func() {
+			if api.app != nil {
+				api.app.Quit()
+			}
+		}()
 	})
 	settingsWin.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		e.Cancel()
@@ -472,12 +512,20 @@ func main() {
 	tray.SetTooltip("云迈智能体")
 	tray.AttachWindow(settingsWin).WindowOffset(6)
 	showSettings := func() { tray.ShowWindow() }
+	trayMenu := app.NewMenu()
+	trayMenu.Add("显示云迈智能体").OnClick(func(_ *application.Context) { api.showWindow() })
+	trayMenu.Add("设置").OnClick(func(_ *application.Context) { showSettings() })
+	trayMenu.AddSeparator()
+	trayMenu.Add("退出").OnClick(func(_ *application.Context) { api.requestQuit() })
+	tray.SetMenu(trayMenu)
 	if trayLeftClickShowsSettings(runtime.GOOS) {
 		tray.OnClick(showSettings)
 	} else {
 		tray.OnClick(func() { api.onTrayLeftClick() })
 	}
-	tray.OnRightClick(showSettings)
+	// On Windows/Linux the context menu contains explicit Show/Quit actions;
+	// keep the left click focused on restoring the main window.
+	tray.OnRightClick(tray.OpenMenu)
 
 	if !updatesOnly {
 		if _, err := api.setAutostart(store.get().Autostart); err != nil {
