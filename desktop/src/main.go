@@ -515,6 +515,10 @@ func main() {
 	trayMenu := app.NewMenu()
 	trayMenu.Add("显示云迈智能体").OnClick(func(_ *application.Context) { api.showWindow() })
 	trayMenu.Add("设置").OnClick(func(_ *application.Context) { showSettings() })
+	// Client updates are a desktop-local operation.  Keep this action outside
+	// the dashboard's admin-only /api/update permission gate so regular users
+	// can check, download, and install the Yunmell client from the tray.
+	trayMenu.Add("检查客户端更新").OnClick(func(_ *application.Context) { api.ShowClientUpdates() })
 	trayMenu.AddSeparator()
 	trayMenu.Add("退出").OnClick(func(_ *application.Context) { api.requestQuit() })
 	tray.SetMenu(trayMenu)

@@ -4,6 +4,10 @@ import { Tooltip } from "antd";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import { userCan } from "../../utils/permissions";
+import {
+  isDesktopShell,
+  showDesktopClientUpdates,
+} from "../../utils/desktopChrome";
 import styles from "./index.module.less";
 
 interface CurrentVersionBadgeProps {
@@ -17,6 +21,7 @@ export default function CurrentVersionBadge({
   const navigate = useNavigate();
   const user = useCurrentUser();
   const { status } = useUpdateStatus();
+  const desktop = isDesktopShell();
 
   const version = status?.product_version ?? status?.current_version;
   const officialBaseline =
@@ -24,6 +29,7 @@ export default function CurrentVersionBadge({
   if (!version) return null;
 
   const canUpdate = userCan(user, "update");
+  const canOpenClientUpdate = desktop && !canUpdate;
   const tooltip = canUpdate
     ? t("header.currentProductVersionAdmin", {
         version,
@@ -33,14 +39,16 @@ export default function CurrentVersionBadge({
     : t("header.currentProductVersion", {
         version,
         baseline: officialBaseline,
-        defaultValue: `云迈产品 v${version}（官方基线 v${officialBaseline}）`,
+        defaultValue: canOpenClientUpdate
+          ? `云迈产品 v${version}（官方基线 v${officialBaseline}），点击检查客户端更新`
+          : `云迈产品 v${version}（官方基线 v${officialBaseline}）`,
       });
   const label = `v${version}`;
   const baselineLabel = officialBaseline
     ? `官方基线 v${officialBaseline}`
     : null;
 
-  if (canUpdate) {
+  if (canUpdate || canOpenClientUpdate) {
     return (
       <Tooltip title={tooltip} mouseEnterDelay={0.35}>
         <button
@@ -48,7 +56,13 @@ export default function CurrentVersionBadge({
           className={`${styles.versionBadge} ${
             isMobile ? styles.versionBadgeMobile : ""
           } ${styles.versionBadgeClickable}`}
-          onClick={() => navigate("/admin/advanced?tab=updates")}
+          onClick={() => {
+            if (canOpenClientUpdate) {
+              showDesktopClientUpdates();
+              return;
+            }
+            navigate("/admin/advanced?tab=updates");
+          }}
           aria-label={tooltip}
         >
           <span>{label}</span>

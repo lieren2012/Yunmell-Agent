@@ -66,6 +66,7 @@ func TestMainWindowMinimiseRemainsNativeAndTrayHasShowQuitActions(t *testing.T) 
 	}
 	for _, needle := range []string{
 		`trayMenu.Add("显示云迈智能体")`,
+		`trayMenu.Add("检查客户端更新")`,
 		`trayMenu.Add("退出")`,
 		`tray.OnRightClick(tray.OpenMenu)`,
 	} {
@@ -171,6 +172,9 @@ func TestSettingsHTMLFitsWithoutScrollbar(t *testing.T) {
 	}
 	if strings.Contains(body, "点击最小化时隐藏窗口并保留在系统托盘") {
 		t.Fatal("tray setting must not claim that native minimise hides the window")
+	}
+	if !strings.Contains(body, `id="client-updates"`) || !strings.Contains(body, `检查客户端更新`) {
+		t.Fatal("desktop settings must expose a client-local update action")
 	}
 }
 
