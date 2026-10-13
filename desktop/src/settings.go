@@ -34,11 +34,12 @@ type Settings struct {
 
 func defaultSettings() Settings {
 	return Settings{
-		Locale:         LocaleEN,
-		Autostart:      false,
-		MinimizeToTray: true,
-		PreventSleep:   false,
-		Port:           8088,
+		Locale:          LocaleEN,
+		Autostart:       false,
+		MinimizeToTray:  true,
+		PreventSleep:    false,
+		Port:            8088,
+		ControlPlaneURL: "https://6602-b3-agent.yun.cab",
 	}
 }
 

@@ -32,6 +32,12 @@ func TestNormalizeControlPlaneURL(t *testing.T) {
 	}
 }
 
+func TestDefaultSettingsUsePublicHTTPSControlPlane(t *testing.T) {
+	if got := defaultSettings().ControlPlaneURL; got != "https://6602-b3-agent.yun.cab" {
+		t.Fatalf("default control plane URL = %q", got)
+	}
+}
+
 func TestNormalizeControlPlaneURLRejectsNonHTTP(t *testing.T) {
 	if _, err := normalizeControlPlaneURL("file:///tmp/control"); err == nil {
 		t.Fatal("expected non-http control plane URL to be rejected")
