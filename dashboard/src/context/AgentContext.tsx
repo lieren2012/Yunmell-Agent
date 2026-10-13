@@ -14,6 +14,7 @@ import {
   toBridgeShadowAgentId,
 } from "../utils/remoteExpert";
 import { isAgentChatReady } from "../utils/agentError";
+import { isNetworkFetchError } from "../utils/networkError";
 
 /**
  * Multi-Agent navigation state.
@@ -98,6 +99,8 @@ interface AgentContextValue {
   loading: boolean;
   /** Last fetch error message, or ``null``. */
   error: string | null;
+  /** True when the latest agent refresh failed because the local runtime is unreachable. */
+  offline: boolean;
   /** Switch the active agent (updates context + localStorage + request.ts). */
   setActiveAgent: (id: string | null) => void;
   /** Force a re-fetch of ``/api/agents`` (e.g. after creating one). */
@@ -198,6 +201,7 @@ const defaultValue: AgentContextValue = {
   activeAgent: null,
   loading: false,
   error: null,
+  offline: false,
   setActiveAgent: () => undefined,
   refresh: async () => undefined,
 };
@@ -345,6 +349,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   const [activeAgentId, setActiveAgentIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [offline, setOffline] = useState(false);
 
   const persistAndApply = useCallback((id: string | null) => {
     setActiveAgentIdState((prev) => {
@@ -368,6 +373,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       setError(null);
       try {
         const { agents: list, liveConnectionIds } = await fetchAgents();
+        setOffline(false);
         // Only update state when content actually changed, to prevent
         // unnecessary re-renders of every component subscribed to this context
         // (the chat page polls every 10 s to refresh unread badges).
@@ -426,6 +432,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load agents");
+        setOffline(isNetworkFetchError(err));
         // On failure, leave whatever previous state was — don't blow away
         // a valid selection just because a fetch hiccuped.
       } finally {
@@ -464,6 +471,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       activeAgent,
       loading,
       error,
+      offline,
       setActiveAgent: persistAndApply,
       refresh,
     }),
@@ -473,6 +481,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       activeAgent,
       loading,
       error,
+      offline,
       persistAndApply,
       refresh,
     ],

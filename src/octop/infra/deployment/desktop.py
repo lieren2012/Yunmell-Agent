@@ -304,7 +304,10 @@ class DesktopIdentityBridge:
             payload = self.decrypt(value)
             profile = self.profile(payload.get("profile"))
             context = payload.get("context")
-            refreshed_at = float(payload.get("refreshed_at"))
+            refreshed_value = payload.get("refreshed_at")
+            if not isinstance(refreshed_value, (int, float, str)):
+                raise ValueError
+            refreshed_at = float(refreshed_value)
             if not isinstance(context, dict) or refreshed_at <= 0:
                 raise ValueError
         except (OctopError, TypeError, ValueError, OverflowError):
@@ -327,7 +330,7 @@ class DesktopIdentityBridge:
         # The context is only a compatibility response for installations
         # upgraded before snapshots were introduced.  The actual model/policy
         # projection is refreshed in the background after the first request.
-        context = {
+        context: dict[str, Any] = {
             "name": "云迈智能体",
             "controls": {
                 "shell": False,

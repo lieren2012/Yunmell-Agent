@@ -32,6 +32,8 @@ describe("AuthGuard offline boot", () => {
     vi.mocked(authApi.me).mockReset();
     vi.mocked(getAuthToken).mockReset();
     vi.mocked(getAuthToken).mockReturnValue(null);
+    localStorage.clear();
+    sessionStorage.clear();
   });
 
   it("shows offline panel instead of the protected shell when setup/status fails", async () => {
@@ -135,6 +137,49 @@ describe("AuthGuard offline boot", () => {
     await user.click(retry);
     await waitFor(() => {
       expect(screen.getByText("protected-shell")).toBeInTheDocument();
+    });
+  });
+
+  it("mounts the cached local shell when the control plane times out", async () => {
+    vi.mocked(getAuthToken).mockReturnValue("tok");
+    vi.mocked(authApi.getAuthStatus).mockResolvedValue({
+      setup_required: false,
+      has_admin: true,
+    } as never);
+    const cachedUser = {
+      id: 7,
+      username: "member",
+      role: "user",
+      locale: "zh",
+    };
+    localStorage.setItem("octop:cached-user", JSON.stringify(cachedUser));
+    const timeout = new Error("Request timed out after 15000ms");
+    timeout.name = "TimeoutError";
+    vi.mocked(authApi.me)
+      .mockRejectedValueOnce(timeout)
+      .mockResolvedValueOnce({
+        ...cachedUser,
+        display_name: null,
+      } as never);
+
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <AuthGuard>
+          <div>protected-shell</div>
+        </AuthGuard>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("protected-shell")).toBeInTheDocument();
+    expect(screen.getByTestId("auth-offline-banner")).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "重新同步" }));
+    await waitFor(() => {
+      expect(authApi.me).toHaveBeenCalledTimes(2);
+      expect(
+        screen.queryByTestId("auth-offline-banner"),
+      ).not.toBeInTheDocument();
     });
   });
 

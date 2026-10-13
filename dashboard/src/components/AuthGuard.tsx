@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Alert, Spin } from "antd";
+import { Alert, Button, Spin } from "antd";
 import {
   AUTH_TOKEN_CHANGED_EVENT,
   AUTH_TOKEN_STORAGE_KEY,
@@ -12,6 +12,44 @@ import { applyUserLocale } from "../utils/locale";
 import { isNetworkFetchError } from "../utils/networkError";
 import { CurrentUserProvider } from "../hooks/useCurrentUser";
 import BootOfflinePanel from "./BootOfflinePanel";
+
+const CACHED_USER_KEY = "octop:cached-user";
+
+function readCachedUser(): OctopUser | null {
+  try {
+    const raw = localStorage.getItem(CACHED_USER_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<OctopUser>;
+    if (
+      !value ||
+      typeof value !== "object" ||
+      typeof value.id !== "number" ||
+      typeof value.username !== "string" ||
+      typeof value.role !== "string"
+    ) {
+      return null;
+    }
+    return value as OctopUser;
+  } catch {
+    return null;
+  }
+}
+
+function cacheUser(user: OctopUser): void {
+  try {
+    localStorage.setItem(CACHED_USER_KEY, JSON.stringify(user));
+  } catch {
+    // Storage may be disabled or full; authentication still works in memory.
+  }
+}
+
+function clearCachedUser(): void {
+  try {
+    localStorage.removeItem(CACHED_USER_KEY);
+  } catch {
+    // Ignore storage failures while clearing a session.
+  }
+}
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -48,6 +86,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
   const [authed, setAuthed] = useState(false);
   const [user, setUser] = useState<OctopUser | null>(null);
   const [offline, setOffline] = useState(false);
+  const [authOffline, setAuthOffline] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
@@ -55,10 +94,12 @@ export default function AuthGuard({ children }: AuthGuardProps) {
 
     const check = async () => {
       setOffline(false);
+      setAuthOffline(false);
       try {
         const status = await authApi.getAuthStatus();
         if (status.connection_required) {
           clearAuthToken();
+          clearCachedUser();
           if (!cancelled) navigateRef.current("/connection", { replace: true });
           return;
         }
@@ -67,6 +108,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         // previous install so background prefetch cannot stampede lockdown.
         if (status.setup_required) {
           clearAuthToken();
+          clearCachedUser();
           if (!cancelled) navigateRef.current("/setup", { replace: true });
           return;
         }
@@ -74,6 +116,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         // Setup done. Need a token.
         const token = getAuthToken();
         if (!token) {
+          clearCachedUser();
           if (!cancelled) {
             setAuthed(false);
             // Stay on the spinner until navigation away completes — do not
@@ -91,17 +134,28 @@ export default function AuthGuard({ children }: AuthGuardProps) {
           await applyUserLocale(me.locale);
           if (!cancelled) {
             setUser(me);
+            cacheUser(me);
             setAuthed(true);
+            setAuthOffline(false);
             setChecking(false);
           }
         } catch (err) {
           if (cancelled) return;
           if (isNetworkFetchError(err)) {
-            setOffline(true);
-            setChecking(false);
-            setAuthed(false);
+            const cached = readCachedUser();
+            if (cached) {
+              setUser(cached);
+              setAuthed(true);
+              setAuthOffline(true);
+              setChecking(false);
+            } else {
+              setOffline(true);
+              setChecking(false);
+              setAuthed(false);
+            }
             return;
           }
+          clearCachedUser();
           setAuthed(false);
           navigateRef.current("/login", { replace: true });
         }
@@ -112,6 +166,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         // shell with no recovery action).
         void err;
         setOffline(true);
+        setAuthOffline(false);
         setChecking(false);
         setAuthed(false);
       }
@@ -129,6 +184,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
   // Drop the protected tree and make the user explicitly log in again.
   useEffect(() => {
     const invalidateAndLogin = () => {
+      clearCachedUser();
       setUser(null);
       setAuthed(false);
       setChecking(true);
@@ -152,6 +208,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       const reason = (event as CustomEvent<{ reason?: string }>).detail?.reason;
       if (reason === "renew") return;
       if (reason === "set") {
+        clearCachedUser();
         setUser(null);
         setAuthed(false);
         setChecking(true);
@@ -159,6 +216,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         navigateRef.current("/login", { replace: true });
         return;
       }
+      clearCachedUser();
       setUser(null);
       setAuthed(false);
       setChecking(true);
@@ -180,6 +238,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
           setChecking(true);
           setAuthed(false);
           setOffline(false);
+          setAuthOffline(false);
           setRetryKey((k) => k + 1);
         }}
       />
@@ -204,7 +263,29 @@ export default function AuthGuard({ children }: AuthGuardProps) {
 
   return (
     <CurrentUserProvider user={user} setUser={setUser}>
-      {user?.deployment?.model_error && <Alert type="warning" message={user.deployment.model_error} showIcon />}
+      {authOffline && (
+        <Alert
+          data-testid="auth-offline-banner"
+          type="warning"
+          showIcon
+          message="企业管理端暂时不可用，当前使用本机缓存身份和运行时。恢复网络后请重试以同步权限与模型策略。"
+          action={
+            <Button
+              size="small"
+              onClick={() => {
+                setChecking(true);
+                setAuthOffline(false);
+                setRetryKey((key) => key + 1);
+              }}
+            >
+              重新同步
+            </Button>
+          }
+        />
+      )}
+      {user?.deployment?.model_error && (
+        <Alert type="warning" message={user.deployment.model_error} showIcon />
+      )}
       {children}
     </CurrentUserProvider>
   );
