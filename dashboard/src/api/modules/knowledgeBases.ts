@@ -57,6 +57,42 @@ export interface KnowledgeBase {
   max_documents: number;
   created_at: number;
   updated_at: number;
+  scope?: "personal" | "enterprise";
+  read_only?: boolean;
+}
+
+interface EnterpriseKnowledgeBaseProjection {
+  knowledge_base_id: string;
+  name: string;
+  description: string;
+  icon_name: string;
+  embedding_model: string;
+  embedding_dim: number;
+  doc_count: number;
+  max_documents: number;
+  created_at: number;
+  updated_at: number;
+  scope: "enterprise";
+  read_only: true;
+}
+
+interface EnterpriseKnowledgeDocumentProjection {
+  id: string;
+  document_id: string;
+  kb_id: string;
+  path: string;
+  filename: string;
+  is_dir: boolean;
+  content_type: string;
+  byte_size: number;
+  content_hash: string;
+  status: KnowledgeDocument["status"];
+  error_message: string;
+  chunk_count: number;
+  created_at: number;
+  updated_at: number;
+  scope: "enterprise";
+  read_only: true;
 }
 
 export interface KnowledgeDocument {
@@ -118,6 +154,31 @@ export const DEFAULT_KNOWLEDGE_LIMITS: KnowledgeLimits = {
   max_document_bytes: 100 * 1024 * 1024,
 };
 
+function mapEnterpriseKnowledgeBase(
+  row: EnterpriseKnowledgeBaseProjection,
+): KnowledgeBase {
+  return {
+    id: row.knowledge_base_id,
+    knowledge_base_id: row.knowledge_base_id,
+    owner_user_id: 0,
+    owner_username: "企业管理",
+    owner_display_name: "企业管理",
+    name: row.name,
+    description: row.description,
+    default_open: false,
+    shared: true,
+    icon_name: row.icon_name,
+    embedding_model: row.embedding_model,
+    embedding_dim: row.embedding_dim,
+    doc_count: row.doc_count,
+    max_documents: row.max_documents,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    scope: "enterprise",
+    read_only: true,
+  };
+}
+
 export const knowledgeBasesApi = {
   getCapability: (agentId?: string | null) =>
     request<KnowledgeCapability>("/knowledge-bases/capability", {
@@ -143,6 +204,29 @@ export const knowledgeBasesApi = {
     request<KnowledgeBase[]>("/knowledge-bases", {
       headers: bridgeAgentHeaders(agentId),
     }),
+  listEnterprise: async () => {
+    const rows = await request<EnterpriseKnowledgeBaseProjection[]>(
+      "/enterprise/knowledge-bases",
+    );
+    return rows.map(mapEnterpriseKnowledgeBase);
+  },
+  getEnterprise: async (id: string) =>
+    mapEnterpriseKnowledgeBase(
+      await request<EnterpriseKnowledgeBaseProjection>(
+        `/enterprise/knowledge-bases/${id}`,
+      ),
+    ),
+  listEnterpriseDocuments: async (id: string, prefix?: string) => {
+    const suffix = prefix ? `?prefix=${encodeURIComponent(prefix)}` : "";
+    const rows = await request<EnterpriseKnowledgeDocumentProjection[]>(
+      `/enterprise/knowledge-bases/${id}/documents${suffix}`,
+    );
+    return rows.map((row) => ({ ...row, has_original: false }));
+  },
+  previewEnterpriseDocument: (id: string, documentId: string) =>
+    request<{ id: string; filename: string; text: string }>(
+      `/enterprise/knowledge-bases/${id}/documents/${documentId}/preview`,
+    ),
   getEmbeddingOptions: (opts?: { allOnnx?: boolean }) =>
     request<KnowledgeEmbeddingOptions>(
       opts?.allOnnx

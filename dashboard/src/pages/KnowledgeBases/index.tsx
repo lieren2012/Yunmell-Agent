@@ -109,6 +109,12 @@ import {
   knowledgeBreadcrumb,
   shouldOpenKnowledgeFolder,
 } from "./knowledgeFolder";
+import {
+  cacheKnowledgeBases,
+  readCachedKnowledgeBases,
+  splitKnowledgeBases,
+  type KnowledgeLibraryScope,
+} from "./knowledgeLibrary";
 import { resolveKnowledgeDeepLink } from "./knowledgeDeepLink";
 import {
   canDownloadKnowledgeOriginal,
@@ -286,10 +292,17 @@ export default function KnowledgeBasesPage() {
   const timeZone = useServerTimezone();
   const user = useCurrentUser();
   const canConfigureKb = userCan(user, "knowledge_settings");
+  const canUseKnowledge = userCan(user, "knowledge_bases");
   const { viewMode, setViewMode, showCardView } = useCardTableView(
     loadDocsViewMode(),
   );
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
+  const [enterpriseBases, setEnterpriseBases] = useState<KnowledgeBase[]>([]);
+  const [libraryScope, setLibraryScope] =
+    useState<KnowledgeLibraryScope>("personal");
+  const [basesError, setBasesError] = useState<string | null>(null);
+  const [enterpriseError, setEnterpriseError] = useState<string | null>(null);
+  const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const [selected, setSelected] = useState<KnowledgeBase | null>(null);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [currentFolder, setCurrentFolder] = useState("");
@@ -681,7 +694,7 @@ export default function KnowledgeBasesPage() {
     useListPanelCollapsed("octop:knowledge-bases:list-collapsed");
 
   const canManageSelected = Boolean(
-    selected && canManageKnowledgeBase(selected, user),
+    selected && !selected.read_only && canManageKnowledgeBase(selected, user),
   );
   const canWriteSelected = canManageSelected;
   const usable = Boolean(capability?.usable);
@@ -689,9 +702,13 @@ export default function KnowledgeBasesPage() {
     ? `${BASE_DOCUMENT_TYPES},${OCR_DOCUMENT_TYPES}`
     : BASE_DOCUMENT_TYPES;
   const limits = capability?.limits ?? DEFAULT_KNOWLEDGE_LIMITS;
-  const ownedBaseCount = user
-    ? bases.filter((base) => base.owner_user_id === user.id).length
-    : 0;
+  const { personal: personalBases } = useMemo(
+    () => splitKnowledgeBases(bases, user?.id),
+    [bases, user?.id],
+  );
+  const visibleBases =
+    libraryScope === "personal" ? personalBases : enterpriseBases;
+  const ownedBaseCount = personalBases.length;
   const atBaseLimit = ownedBaseCount >= limits.max_bases_per_owner;
   const fileCount = documents.filter((document) => !document.is_dir).length;
   const isAtDocumentLimit =
@@ -713,18 +730,46 @@ export default function KnowledgeBasesPage() {
   );
 
   const loadBases = useCallback(async () => {
+    setBasesError(null);
     try {
       const rows = await knowledgeBasesApi.list();
       setBases(rows);
+      if (user?.id != null) cacheKnowledgeBases(user.id, rows);
       setSelected((current) =>
         current && !rows.some((row) => row.id === current.id) ? null : current,
       );
     } catch (error) {
-      message.error(apiErrorMessage(error, t("knowledgeBases.loadFailed"), t));
+      const messageText = apiErrorMessage(
+        error,
+        t("knowledgeBases.loadFailed"),
+        t,
+      );
+      setBasesError(messageText);
+      if (user?.id != null) {
+        const cached = readCachedKnowledgeBases(user.id);
+        if (cached.length > 0) {
+          setBases(cached);
+          return;
+        }
+      }
+      setBases([]);
+    }
+  }, [t, user?.id]);
+
+  const loadEnterpriseBases = useCallback(async () => {
+    setEnterpriseError(null);
+    try {
+      setEnterpriseBases(await knowledgeBasesApi.listEnterprise());
+    } catch (error) {
+      setEnterpriseError(
+        apiErrorMessage(error, t("knowledgeBases.loadFailed"), t),
+      );
+      setEnterpriseBases([]);
     }
   }, [t]);
 
   const loadCapability = useCallback(async () => {
+    setCapabilityError(null);
     try {
       const nextCapability = await knowledgeBasesApi.getCapability();
       setCapability(nextCapability);
@@ -737,7 +782,9 @@ export default function KnowledgeBasesPage() {
       setOcrModel(nextCapability.ocr?.model || "rapidocr");
       setOcrProviderId(nextCapability.ocr?.provider_id || undefined);
     } catch (error) {
-      message.error(apiErrorMessage(error, t("knowledgeBases.loadFailed"), t));
+      setCapabilityError(
+        apiErrorMessage(error, t("knowledgeBases.loadFailed"), t),
+      );
     }
   }, [t]);
 
@@ -887,6 +934,13 @@ export default function KnowledgeBasesPage() {
       const requestId = detailRequestGate.current.begin();
       if (!options?.silent) setDetailLoading(true);
       try {
+        if (libraryScope === "enterprise") {
+          const base = await knowledgeBasesApi.getEnterprise(id);
+          if (!detailRequestGate.current.isCurrent(requestId)) return;
+          setSelected(base);
+          setDocuments([]);
+          return;
+        }
         const [base, nextDocuments] = await Promise.all([
           knowledgeBasesApi.get(id),
           knowledgeBasesApi.listDocuments(id),
@@ -915,7 +969,7 @@ export default function KnowledgeBasesPage() {
         }
       }
     },
-    [t],
+    [libraryScope, t],
   );
 
   useEffect(() => {
@@ -927,6 +981,12 @@ export default function KnowledgeBasesPage() {
       setLoading(false),
     );
   }, [loadBases, loadCapability]);
+
+  useEffect(() => {
+    if (libraryScope === "enterprise" && canUseKnowledge) {
+      void loadEnterpriseBases();
+    }
+  }, [canUseKnowledge, libraryScope, loadEnterpriseBases]);
 
   useEffect(() => {
     const indexing = documents.some(
@@ -941,10 +1001,17 @@ export default function KnowledgeBasesPage() {
     return () => window.clearInterval(timer);
   }, [documents, loadDetail, selected]);
   useEffect(() => {
-    if (!isMobile && !selected && bases.length > 0 && !detailLoading) {
-      void loadDetail(bases[0].id);
+    if (!isMobile && !selected && visibleBases.length > 0 && !detailLoading) {
+      void loadDetail(visibleBases[0].id);
     }
-  }, [bases, detailLoading, isMobile, loadDetail, selected]);
+  }, [detailLoading, isMobile, loadDetail, selected, visibleBases]);
+
+  useEffect(() => {
+    if (selected && !visibleBases.some((base) => base.id === selected.id)) {
+      setSelected(null);
+      setDocuments([]);
+    }
+  }, [selected, visibleBases]);
 
   useEffect(() => {
     if (!isMobile) setMobilePane("list");
@@ -956,6 +1023,9 @@ export default function KnowledgeBasesPage() {
       await Promise.all([
         loadBases(),
         loadCapability(),
+        libraryScope === "enterprise"
+          ? loadEnterpriseBases()
+          : Promise.resolve(),
         selected ? loadDetail(selected.id) : Promise.resolve(),
       ]);
     } finally {
@@ -1853,8 +1923,18 @@ export default function KnowledgeBasesPage() {
   const showListPane = !isMobile || mobilePane === "list";
   const showDetailPane = !isMobile || mobilePane === "detail";
   const showListPanel = showListPane && (isMobile || !listPanelCollapsed);
-  const showEnableGuide = !loading && !usable;
-  const showEmptyGuide = !loading && usable && bases.length === 0;
+  const showEnableGuide =
+    !loading &&
+    !basesError &&
+    !usable &&
+    personalBases.length === 0 &&
+    libraryScope === "personal";
+  const showEmptyGuide =
+    !loading &&
+    !basesError &&
+    usable &&
+    visibleBases.length === 0 &&
+    libraryScope === "personal";
   const emptyLayoutClassName = styles.emptyLayout;
   const setupMascot = <OctopEmptyMascot />;
 
@@ -1971,12 +2051,61 @@ export default function KnowledgeBasesPage() {
             } as CSSProperties
           }
         >
+          {(basesError || enterpriseError || capabilityError) && (
+            <Alert
+              className={styles.libraryAlert}
+              type="warning"
+              showIcon
+              message={
+                basesError || enterpriseError
+                  ? t("knowledgeBases.offlineNotice", {
+                      defaultValue:
+                        "企业知识库暂时无法同步；个人知识库显示最近一次成功加载的数据。",
+                    })
+                  : capabilityError
+              }
+              description={
+                (enterpriseError || basesError) && libraryScope === "enterprise"
+                  ? t("knowledgeBases.enterpriseUnavailable", {
+                      defaultValue:
+                        "企业知识库需要连接企业管理服务后才能刷新。",
+                    })
+                  : undefined
+              }
+            />
+          )}
           {showListPanel ? (
             <aside className={styles.baseList}>
               <div className={styles.listPanelHeader}>
-                <span className={styles.listPanelTitle}>
-                  {t("knowledgeBases.title")}
-                </span>
+                <div className={styles.listPanelTitleGroup}>
+                  <span className={styles.listPanelTitle}>
+                    {t("knowledgeBases.title")}
+                  </span>
+                  <Segmented
+                    size="small"
+                    aria-label={t("knowledgeBases.scopeLabel", {
+                      defaultValue: "知识库范围",
+                    })}
+                    value={libraryScope}
+                    onChange={(value) =>
+                      setLibraryScope(value as KnowledgeLibraryScope)
+                    }
+                    options={[
+                      {
+                        label: t("knowledgeBases.personal", {
+                          defaultValue: "我的知识库",
+                        }),
+                        value: "personal",
+                      },
+                      {
+                        label: t("knowledgeBases.enterprise", {
+                          defaultValue: "企业知识库",
+                        }),
+                        value: "enterprise",
+                      },
+                    ]}
+                  />
+                </div>
                 {!isMobile ? (
                   <Tooltip title={t("knowledgeBases.collapseListPanel")}>
                     <button
@@ -1994,7 +2123,12 @@ export default function KnowledgeBasesPage() {
                 <Button
                   type="primary"
                   icon={<Plus size={15} />}
-                  disabled={!usable || atBaseLimit}
+                  disabled={
+                    !canUseKnowledge ||
+                    libraryScope !== "personal" ||
+                    !usable ||
+                    atBaseLimit
+                  }
                   onClick={openCreate}
                 >
                   {t("knowledgeBases.create")}
@@ -2015,7 +2149,7 @@ export default function KnowledgeBasesPage() {
                 <List
                   className={styles.list}
                   split={false}
-                  dataSource={bases}
+                  dataSource={visibleBases}
                   locale={{
                     emptyText: (
                       <Empty
@@ -2194,6 +2328,16 @@ export default function KnowledgeBasesPage() {
                     onDragOver={handleDocsDragOver}
                     onDrop={handleDocsDrop}
                   >
+                    {selected.read_only ? (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message={t("knowledgeBases.enterpriseReadOnly", {
+                          defaultValue:
+                            "这是企业知识库，只读查看；文档管理由企业管理员负责。",
+                        })}
+                      />
+                    ) : null}
                     {dragActive && canDropUpload ? (
                       <div className={styles.dropOverlay} aria-hidden>
                         <FileUp size={36} strokeWidth={1.75} />

@@ -278,6 +278,7 @@
 
 .layout {
   display: flex;
+  position: relative;
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -308,6 +309,22 @@
   justify-content: space-between;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.listPanelTitleGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.libraryAlert {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 12px;
+  right: 12px;
 }
 
 .listPanelTitle {
