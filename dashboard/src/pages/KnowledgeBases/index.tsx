@@ -936,9 +936,10 @@ export default function KnowledgeBasesPage() {
       try {
         if (libraryScope === "enterprise") {
           const base = await knowledgeBasesApi.getEnterprise(id);
+          const nextDocuments = await knowledgeBasesApi.listEnterpriseDocuments(id);
           if (!detailRequestGate.current.isCurrent(requestId)) return;
           setSelected(base);
-          setDocuments([]);
+          setDocuments(nextDocuments);
           return;
         }
         const [base, nextDocuments] = await Promise.all([
@@ -1578,6 +1579,18 @@ export default function KnowledgeBasesPage() {
     try {
       // Prefer raw UTF-8 for editable text so markdown preview matches the file.
       if (asMarkdown || isEditableKnowledgeDocument(document)) {
+        if (selected.read_only) {
+          const preview = await knowledgeBasesApi.previewEnterpriseDocument(
+            selected.id,
+            document.id,
+          );
+          if (abort.signal.aborted) return;
+          setPreviewFilename(preview.filename);
+          setPreviewText(
+            preview.text.trim() ? preview.text : t("knowledgeBases.previewEmpty"),
+          );
+          return;
+        }
         const payload = await knowledgeBasesApi.getTextDocument(
           selected.id,
           document.id,
@@ -1588,10 +1601,9 @@ export default function KnowledgeBasesPage() {
           payload.text.trim() ? payload.text : t("knowledgeBases.previewEmpty"),
         );
       } else {
-        const preview = await knowledgeBasesApi.previewDocument(
-          selected.id,
-          document.id,
-        );
+        const preview = selected.read_only
+          ? await knowledgeBasesApi.previewEnterpriseDocument(selected.id, document.id)
+          : await knowledgeBasesApi.previewDocument(selected.id, document.id);
         if (abort.signal.aborted) return;
         setPreviewFilename(preview.filename);
         setPreviewText(
