@@ -30,3 +30,33 @@ def test_release_list_selects_beta_only_when_enabled(monkeypatch):
     assert stable["notes"] == "stable"
     assert beta["version"] == "1.1.0b1"
     assert beta["prerelease"] is True
+
+
+def test_prerelease_install_does_not_fall_back_to_older_stable(monkeypatch):
+    """A b10 install must not be told that the older 1.0.9 is latest."""
+    releases = [
+        {"tag_name": "v1.0.9", "prerelease": False, "body": "stable"},
+        {"tag_name": "v1.0.10b10", "prerelease": True, "body": "current"},
+        {"tag_name": "v1.0.10b11", "prerelease": True, "body": "next"},
+    ]
+    monkeypatch.setattr(
+        update.urllib.request,
+        "urlopen",
+        lambda *a, **kw: io.BytesIO(json.dumps(releases).encode()),
+    )
+
+    latest = update._fetch_yunmell_release(
+        stable_only=True, current_version="1.0.10b10"
+    )
+    assert latest["version"] == "1.0.10b11"
+    assert update.is_newer(latest["version"], "1.0.10b10")
+
+    current = update._fetch_yunmell_release(
+        stable_only=True, current_version="1.0.0"
+    )
+    assert current["version"] == "1.0.9"
+
+    beta = update._fetch_yunmell_release(
+        stable_only=False, current_version="1.0.0"
+    )
+    assert beta["version"] == "1.0.10b11"

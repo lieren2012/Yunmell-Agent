@@ -20,9 +20,12 @@ type updateTransport func(*http.Request) (*http.Response, error)
 
 func (f updateTransport) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
 func testUpdateAsset(body []byte) clientReleaseAsset {
+	return testUpdateAssetForVersion(body, "1.0.11")
+}
+func testUpdateAssetForVersion(body []byte, version string) clientReleaseAsset {
 	digest := sha256.Sum256(body)
-	name := "Yunmell-Agent-desktop-windows-amd64-1.0.11.exe"
-	return clientReleaseAsset{Name: name, Size: int64(len(body)), Digest: "sha256:" + hex.EncodeToString(digest[:]), URL: "https://github.com/" + defaultUpdateRepository + "/releases/download/v1.0.11/" + name}
+	name := "Yunmell-Agent-desktop-windows-amd64-" + version + ".exe"
+	return clientReleaseAsset{Name: name, Size: int64(len(body)), Digest: "sha256:" + hex.EncodeToString(digest[:]), URL: "https://github.com/" + defaultUpdateRepository + "/releases/download/v" + version + "/" + name}
 }
 func testUpdater(t *testing.T, releases []clientRelease, body []byte) *clientUpdater {
 	t.Helper()
@@ -129,7 +132,7 @@ func TestClientUpdateFailedInstallerRestoresOldExecutable(t *testing.T) {
 	}
 }
 func TestClientUpdaterRejectsDowngrades(t *testing.T) {
-	u := testUpdater(t, []clientRelease{{Tag: "v1.0.9"}}, nil)
+	u := testUpdater(t, []clientRelease{{Tag: "v1.0.9"}, {Tag: "v1.0.10b10", Prerelease: true}}, nil)
 	if err := u.check(false); err != nil {
 		t.Fatal(err)
 	}
@@ -138,6 +141,35 @@ func TestClientUpdaterRejectsDowngrades(t *testing.T) {
 	}
 	if err := u.download(); err == nil {
 		t.Fatal("older release must not be downloaded for installation")
+	}
+}
+
+func TestClientUpdaterKeepsCurrentPrereleaseTrackWhenStableOnly(t *testing.T) {
+	// The installed client is 1.0.10b10. A stable-only check must not report the
+	// older 1.0.9 tag as latest, and must still offer a real b11 upgrade.
+	u := testUpdater(t, []clientRelease{
+		{Tag: "v1.0.9"},
+		{Tag: "v1.0.10b10", Prerelease: true},
+	}, nil)
+	if err := u.check(false); err != nil {
+		t.Fatal(err)
+	}
+	if got := u.snapshot(); got.LatestVersion != "1.0.10b10" || got.HasUpdate {
+		t.Fatalf("current pre-release was treated as a downgrade: %+v", got)
+	}
+
+	body := []byte("next Yunmell installer")
+	asset := testUpdateAssetForVersion(body, "1.0.10b11")
+	u = testUpdater(t, []clientRelease{
+		{Tag: "v1.0.9"},
+		{Tag: "v1.0.10b10", Prerelease: true},
+		{Tag: "v1.0.10b11", Prerelease: true, Assets: []clientReleaseAsset{asset}},
+	}, body)
+	if err := u.check(false); err != nil {
+		t.Fatal(err)
+	}
+	if got := u.snapshot(); got.LatestVersion != "1.0.10b11" || !got.HasUpdate {
+		t.Fatalf("newer pre-release was not selected: %+v", got)
 	}
 }
 

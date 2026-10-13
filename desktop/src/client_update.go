@@ -194,7 +194,7 @@ func (u *clientUpdater) checkRelease(includePrerelease bool) error {
 	if err = json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&releases); err != nil {
 		return fmt.Errorf("invalid client release metadata")
 	}
-	var chosen *clientRelease
+	var stable, prerelease []*clientRelease
 	for i := range releases {
 		r := &releases[i]
 		version := strings.TrimPrefix(r.Tag, "v")
@@ -202,11 +202,43 @@ func (u *clientUpdater) checkRelease(includePrerelease bool) error {
 			continue
 		}
 		pre := r.Prerelease || clientVersionIsPrerelease(version)
-		if !includePrerelease && pre {
-			continue
+		if pre {
+			prerelease = append(prerelease, r)
+		} else {
+			stable = append(stable, r)
 		}
-		if chosen == nil || compareVersions(r.Tag, chosen.Tag) > 0 {
-			chosen = r
+	}
+	var chosen *clientRelease
+	chooseNewest := func(candidates []*clientRelease) {
+		for _, candidate := range candidates {
+			if chosen == nil || compareVersions(candidate.Tag, chosen.Tag) > 0 {
+				chosen = candidate
+			}
+		}
+	}
+	if includePrerelease {
+		chooseNewest(append(stable, prerelease...))
+	} else if !clientVersionIsPrerelease(clientVersion) {
+		chooseNewest(stable)
+	} else {
+		// A pre-release install may upgrade to a newer stable release. If the
+		// stable channel is behind it, stay on the same release line instead of
+		// presenting that older stable tag as the latest version.
+		chooseNewest(stable)
+		if chosen == nil || compareVersions(chosen.Tag, clientVersion) <= 0 {
+			chosen = nil
+			current := parseVersion(clientVersion).release
+			for _, candidate := range prerelease {
+				if parseVersion(candidate.Tag).release != current {
+					continue
+				}
+				if chosen == nil || compareVersions(candidate.Tag, chosen.Tag) > 0 {
+					chosen = candidate
+				}
+			}
+		}
+		if chosen == nil {
+			return fmt.Errorf("no published release on the installed pre-release track")
 		}
 	}
 	if chosen == nil {

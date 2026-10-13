@@ -423,7 +423,20 @@ def _channel_payload(
     }
 
 
-def _fetch_yunmell_release(*, stable_only: bool = True) -> dict[str, Any]:
+def _fetch_yunmell_release(
+    *, stable_only: bool = True, current_version: str | None = None
+) -> dict[str, Any]:
+    """Return the newest release from the Yunmell GitHub repository.
+
+    A stable-only check normally excludes pre-releases.  A Yunmell desktop or
+    server install can itself be on a pre-release, though.  Filtering every
+    pre-release in that case would make an older stable release (for example
+    ``1.0.9``) appear to be newer than the installed ``1.0.10b10``.  Keep the
+    pre-release track visible while such an install is active, so comparison
+    is performed against the real installed version and never proposes a
+    downgrade.  Callers that only need to inspect the stable channel can omit
+    ``current_version``.
+    """
     url = f"https://api.github.com/repos/{_YUNMELL_REPO}/releases?per_page=100"
     req = urllib.request.Request(
         url,
@@ -434,13 +447,18 @@ def _fetch_yunmell_release(*, stable_only: bool = True) -> dict[str, Any]:
     )
     with urllib.request.urlopen(req, timeout=10) as response:
         releases = json.loads(response.read().decode("utf-8"))
-    candidates = [
+    published = [
         release
         for release in releases
         if not release.get("draft")
         and release.get("tag_name")
-        and (not stable_only or not release.get("prerelease"))
     ]
+    keep_prereleases = bool(current_version and is_prerelease(current_version))
+    candidates = (
+        published
+        if not stable_only or keep_prereleases
+        else [release for release in published if not release.get("prerelease")]
+    )
     if not candidates:
         raise ValueError("no releases available for this channel")
     data = candidates[0]
@@ -486,7 +504,10 @@ def _check_channel(channel: str, *, stable_only: bool = True) -> dict[str, Any]:
             )
     elif channel == "yunmell":
         try:
-            release = _fetch_yunmell_release(stable_only=stable_only)
+            release = _fetch_yunmell_release(
+                stable_only=stable_only,
+                current_version=_channel_current_version("yunmell"),
+            )
             result = _channel_payload(
                 channel,
                 latest=release["version"],
