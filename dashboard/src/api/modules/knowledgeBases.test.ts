@@ -117,6 +117,39 @@ describe("knowledgeBasesApi", () => {
     );
   });
 
+  it("keeps enterprise documents read-only and uses the enterprise preview endpoint", async () => {
+    request.mockResolvedValueOnce([
+      {
+        id: "doc-1",
+        document_id: "doc-1",
+        kb_id: "enterprise-1",
+        path: "guide.md",
+        filename: "guide.md",
+        is_dir: false,
+        content_type: "text/markdown",
+        byte_size: 12,
+        content_hash: "hash",
+        status: "ready",
+        error_message: "",
+        chunk_count: 1,
+        created_at: 1,
+        updated_at: 2,
+        scope: "enterprise",
+        read_only: true,
+      },
+    ]);
+    const docs = await knowledgeBasesApi.listEnterpriseDocuments("enterprise-1");
+    expect(request).toHaveBeenCalledWith(
+      "/enterprise/knowledge-bases/enterprise-1/documents",
+    );
+    expect(docs[0]?.has_original).toBe(false);
+
+    knowledgeBasesApi.previewEnterpriseDocument("enterprise-1", "doc-1");
+    expect(request).toHaveBeenLastCalledWith(
+      "/enterprise/knowledge-bases/enterprise-1/documents/doc-1/preview",
+    );
+  });
+
   it("forwards the upload progress handler", () => {
     const file = new File(["document"], "notes.md", { type: "text/markdown" });
     const onProgress = vi.fn();
