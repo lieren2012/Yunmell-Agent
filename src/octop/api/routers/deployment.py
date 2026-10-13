@@ -88,8 +88,8 @@ async def list_enterprise_knowledge_documents(
     rows = service.list_documents(kb_id, actor_user_id=user.id, is_admin=False, prefix=prefix)
     return [
         {
-            "document_id": row.id,
             "id": row.id,
+            "document_id": row.id,
             "kb_id": row.kb_id,
             "path": row.path,
             "filename": row.filename,
