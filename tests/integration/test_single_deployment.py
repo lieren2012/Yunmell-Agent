@@ -99,9 +99,22 @@ async def test_desktop_remote_identity_local_runtime_and_authority_binding(env, 
         remote_session = identity.token_for(uid)
         assert remote_session.encode() not in local_server.services.secret_repo.get(f"yunmell.remote-session:{uid}")
         headers = {"Authorization": "Bearer " + response.json()["access_token"]}
+        remote_calls: list[tuple[str, str]] = []
+
+        async def unavailable_remote(method, path, **kwargs):
+            remote_calls.append((method, path))
+            raise AssertionError("local runtime request attempted control-plane access")
+
+        monkeypatch.setattr(identity, "remote", unavailable_remote)
+        local_me = await local_client.get("/api/auth/me", headers=headers)
+        assert local_me.status_code == 200, local_me.text
+        local_agents = await local_client.get("/api/agents", headers=headers)
+        assert local_agents.status_code == 200, local_agents.text
+        assert remote_calls == []
         models = await local_client.get("/api/providers/resolved", headers=headers)
         assert models.status_code == 200
         assert models.json()[0]["model"] == "yunmell-default"
+        monkeypatch.setattr(identity, "remote", remote)
         assert (await local_client.get("/api/admin/providers", headers=headers)).status_code == 403
         created = await local_client.post("/api/agents", headers=headers, json={"name": "普通用户创建"})
         assert created.status_code == 201, created.text

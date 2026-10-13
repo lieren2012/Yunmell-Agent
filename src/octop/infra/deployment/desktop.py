@@ -20,14 +20,22 @@ from octop.infra.deployment.connection import management_address
 from octop.infra.deployment.service import deployment
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.users.identity import User
+from octop.infra.users.permissions import ALL_PERMISSION_KEYS
 
 MODEL = "yunmell-default"
+IDENTITY_SNAPSHOT_TTL_SECONDS = 300
+IDENTITY_SNAPSHOT_PREFIX = "yunmell.identity-snapshot:"
+REMOTE_TIMEOUT = httpx.Timeout(5.0, connect=2.0)
 
 
 class DesktopIdentityBridge:
     def __init__(self, server: Any) -> None:
         self.server = server
         self.lock = asyncio.Lock()
+        # Refreshes are deliberately detached from request handling.  A local
+        # runtime request must never wait for the control plane to answer.
+        self._refresh_tasks: dict[int, asyncio.Task[None]] = {}
+        self._offline_users: set[int] = set()
 
     def cipher(self) -> Fernet:
         path = self.server.paths.root / ".yunmell-session.key"
@@ -80,7 +88,7 @@ class DesktopIdentityBridge:
             outgoing["Authorization"] = f"Bearer {token}"
         try:
             async with httpx.AsyncClient(
-                trust_env=False, follow_redirects=False, timeout=15
+                trust_env=False, follow_redirects=False, timeout=REMOTE_TIMEOUT
             ) as client:
                 response = await client.request(
                     method, address + "/api" + path, content=content, headers=outgoing
@@ -164,8 +172,25 @@ class DesktopIdentityBridge:
 
     def revoke_session(self, local_id: int) -> None:
         """Invalidate even when the management host is offline, retaining all user data."""
+        task = self._refresh_tasks.pop(local_id, None)
+        self._offline_users.discard(local_id)
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+        if task is not None and task is not current_task and not task.done():
+            task.cancel()
         with self.server.services.db.transaction() as connection:
             connection.execute("DELETE FROM secrets WHERE k = ?", (f"yunmell.remote-session:{local_id}",))
+        # Do not continue using a previously refreshed identity after logout or
+        # a remote revocation.  The local JWT session check is the hard gate;
+        # dropping the snapshot also prevents stale profile data resurfacing
+        # after a subsequent login.
+        with self.server.services.db.transaction() as connection:
+            connection.execute(
+                "DELETE FROM secrets WHERE k = ?",
+                (f"{IDENTITY_SNAPSHOT_PREFIX}{local_id}",),
+            )
 
     @staticmethod
     def response_object(response: httpx.Response) -> dict[str, Any]:
@@ -220,6 +245,7 @@ class DesktopIdentityBridge:
                 self.revoke_session(local_id)
                 raise
             services.user_repo.set_permissions(local_id, self.local_permissions(profile, context))
+            self._store_snapshot(local_id, profile, context)
             user = self.cache_user(local_id)
             ttl = services.config.access_token_ttl_seconds
             token = self.issue_local_token(user)
@@ -251,22 +277,147 @@ class DesktopIdentityBridge:
         self.server.user_manager.register_cached_user(user)
         return user
 
+    def _store_snapshot(
+        self, local_id: int, profile: dict[str, Any], context: dict[str, Any]
+    ) -> None:
+        """Persist the last trusted control-plane projection locally.
+
+        The value is encrypted with the desktop session key and is only used
+        for local UI/runtime responses.  It is never accepted as a replacement
+        for the encrypted remote session token in ``session()``.
+        """
+        payload = {
+            "profile": dict(profile),
+            "context": dict(context),
+            "refreshed_at": time.time(),
+        }
+        key = f"{IDENTITY_SNAPSHOT_PREFIX}{local_id}"
+        value = self.encrypt(payload)
+        self.server.services.secret_repo.get_or_create(key, lambda: value)
+        self.server.services.secret_repo.rotate(key, value)
+
+    def _load_snapshot(self, local_id: int) -> tuple[dict[str, Any], dict[str, Any], float] | None:
+        value = self.server.services.secret_repo.get(f"{IDENTITY_SNAPSHOT_PREFIX}{local_id}")
+        if value is None:
+            return None
+        try:
+            payload = self.decrypt(value)
+            profile = self.profile(payload.get("profile"))
+            context = payload.get("context")
+            refreshed_at = float(payload.get("refreshed_at"))
+            if not isinstance(context, dict) or refreshed_at <= 0:
+                raise ValueError
+        except (OctopError, TypeError, ValueError, OverflowError):
+            return None
+        return profile, dict(context), refreshed_at
+
+    def _local_snapshot(self, local_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Build a minimal offline projection for pre-snapshot installations."""
+        row = self.server.services.user_repo.get(local_id)
+        if row is None:
+            raise OctopError(ErrorCode.AUTH_FAILED, "本机身份不存在，请重新登录", status=401)
+        profile = {
+            "id": local_id,
+            "username": row.username,
+            "role": row.role,
+            "display_name": row.display_name,
+            "locale": row.locale,
+            "permissions": list(row.permissions),
+        }
+        # The context is only a compatibility response for installations
+        # upgraded before snapshots were introduced.  The actual model/policy
+        # projection is refreshed in the background after the first request.
+        context = {
+            "name": "云迈智能体",
+            "controls": {
+                "shell": False,
+                "browser": False,
+                "desktop": False,
+                "filesystem": True,
+                "network": True,
+            },
+            "resource_policy": {},
+            "allowed_models": [],
+            "default_model": None,
+            "offline": True,
+        }
+        return profile, context
+
+    async def _background_refresh(self, local_id: int) -> None:
+        try:
+            await self.validate(local_id)
+            self._offline_users.discard(local_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Keep serving the last trusted local projection while offline.
+            # A 401/403 from validate() revokes the encrypted session, so the
+            # next local request will still fail closed.
+            self._offline_users.add(local_id)
+            return
+
+    def _schedule_refresh(self, local_id: int) -> None:
+        task = self._refresh_tasks.get(local_id)
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._background_refresh(local_id))
+        self._refresh_tasks[local_id] = task
+
+        def done(completed: asyncio.Task[None]) -> None:
+            if self._refresh_tasks.get(local_id) is completed:
+                self._refresh_tasks.pop(local_id, None)
+            try:
+                completed.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+
+        task.add_done_callback(done)
+
+    def cached_identity(self, local_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Return the local identity snapshot without a control-plane request.
+
+        Snapshots are soft-TTL: stale data is served while a single detached
+        refresh runs.  This keeps local agents/chat/usage pages responsive
+        during slow or unavailable management services while still allowing a
+        later refresh to revoke disabled accounts and update policy.
+        """
+        snapshot = self._load_snapshot(local_id)
+        if snapshot is None:
+            profile, context = self._local_snapshot(local_id)
+            self._schedule_refresh(local_id)
+            return profile, context
+        profile, context, refreshed_at = snapshot
+        if time.time() - refreshed_at >= IDENTITY_SNAPSHOT_TTL_SECONDS:
+            self._schedule_refresh(local_id)
+        if local_id in self._offline_users:
+            context = {**context, "offline": True}
+        return profile, context
+
     @staticmethod
     def local_permissions(profile: dict[str, Any], context: dict[str, Any]) -> list[str]:
         """Project runtime permissions separately from management privileges.
 
-        The management API exposes effective permissions, which deliberately
-        expands an administrator to the full catalogue.  That expansion must
-        never turn into local host-tool access.  A future control-plane version
-        may provide explicit ``local_permissions``; until then admins receive
-        no local tool/model-switch grants while ordinary role permissions are
-        preserved.
+        ``local_permissions`` is an explicit policy when present.  Older
+        management services sent an empty list for admins, so an empty admin
+        projection falls back to the complete local catalog; this keeps the
+        desktop administrator from receiving 403s on channels/skills while
+        still allowing a newer service to send a narrowed non-empty list.
         """
         explicit = context.get("local_permissions")
-        if isinstance(explicit, list) and all(isinstance(key, str) for key in explicit):
+        if (
+            isinstance(explicit, list)
+            and all(isinstance(key, str) for key in explicit)
+            and (profile.get("role") != "admin" or explicit)
+        ):
             return list(dict.fromkeys(explicit))
         if profile.get("role") == "admin":
-            return []
+            return sorted(ALL_PERMISSION_KEYS)
         permissions = profile.get("permissions")
         if not isinstance(permissions, list):
             return []
@@ -306,6 +457,7 @@ class DesktopIdentityBridge:
             local_id, self.local_permissions(profile, context)
         )
         self.cache_user(local_id)
+        self._store_snapshot(local_id, profile, context)
         return profile, context
 
     async def refresh_context(self, local_id: int) -> dict[str, Any]:

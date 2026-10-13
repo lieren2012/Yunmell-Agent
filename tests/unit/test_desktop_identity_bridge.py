@@ -5,6 +5,7 @@ import pytest
 from octop.infra.deployment.connection import normalize_address
 from octop.infra.deployment.desktop import DesktopIdentityBridge
 from octop.infra.errors import OctopError
+from octop.infra.users.permissions import ALL_PERMISSION_KEYS
 
 
 def test_management_address_is_canonical_and_has_no_embedded_credentials() -> None:
@@ -15,9 +16,16 @@ def test_management_address_is_canonical_and_has_no_embedded_credentials() -> No
             normalize_address(value)
 
 
-def test_admin_management_permissions_do_not_become_local_tool_permissions() -> None:
+def test_admin_without_explicit_policy_gets_full_local_permissions() -> None:
     profile = {"role": "admin", "permissions": ["users", "providers", "terminal", "desktop"]}
-    assert DesktopIdentityBridge.local_permissions(profile, {}) == []
+    assert DesktopIdentityBridge.local_permissions(profile, {}) == sorted(ALL_PERMISSION_KEYS)
+
+
+def test_admin_empty_legacy_policy_gets_full_local_permissions() -> None:
+    profile = {"role": "admin", "permissions": ["users", "providers"]}
+    assert DesktopIdentityBridge.local_permissions(profile, {"local_permissions": []}) == sorted(
+        ALL_PERMISSION_KEYS
+    )
 
 
 def test_explicit_local_permissions_are_separate_from_management_permissions() -> None:

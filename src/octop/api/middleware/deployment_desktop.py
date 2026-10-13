@@ -199,7 +199,10 @@ def install(app: Any, server: Any) -> None:
             if is_jwt_exempt_request(request) and path != "/api/auth/deployment/session":
                 return await call_next(request)
             user = authenticate_request(request, server)
-            profile, context = await client.validate(user.id)
+            # Identity and deployment policy are refreshed on a soft TTL in
+            # the background.  Local runtime APIs must never wait for a
+            # control-plane /auth/me or /auth/deployment/session request.
+            profile, context = client.cached_identity(user.id)
             if path == "/api/auth/deployment/session":
                 return JSONResponse(context)
             if path == "/api/auth/me" and request.method == "GET":
@@ -220,7 +223,7 @@ def install(app: Any, server: Any) -> None:
                 return JSONResponse([_row_to_dict(provider)] if provider else [])
             if (
                 path.startswith(MANAGEMENT)
-                or path in {"/api/auth/me", "/api/auth/change-password", "/api/auth/logout"}
+                or path in {"/api/auth/change-password", "/api/auth/logout"}
                 or path.startswith("/api/auth/me/")
             ):
                 remote_path = path.removeprefix("/api")
