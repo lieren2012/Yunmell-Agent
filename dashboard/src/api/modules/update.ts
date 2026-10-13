@@ -2,6 +2,10 @@ import { request } from "../request";
 
 export interface UpdateStatus {
   current_version: string;
+  /** Yunmell product version; ``current_version`` remains official for API compatibility. */
+  product_version?: string;
+  /** OpenOct/Octop baseline integrated by this build. */
+  official_baseline_version?: string;
   latest_version: string | null;
   has_update: boolean;
   is_editable: boolean;

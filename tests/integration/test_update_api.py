@@ -12,6 +12,8 @@ async def test_update_status_shape(env_admin_client: Any) -> None:
     body = r.json()
     for key in (
         "current_version",
+        "official_baseline_version",
+        "product_version",
         "latest_version",
         "has_update",
         "is_editable",
@@ -24,6 +26,8 @@ async def test_update_status_shape(env_admin_client: Any) -> None:
         "latest_is_prerelease",
     ):
         assert key in body
+
+    assert body["official_baseline_version"] == "1.0.2b7"
 
 
 async def test_update_check_admin_only(env_admin_client: Any) -> None:

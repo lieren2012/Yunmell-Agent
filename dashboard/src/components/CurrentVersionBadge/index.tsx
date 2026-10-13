@@ -18,14 +18,27 @@ export default function CurrentVersionBadge({
   const user = useCurrentUser();
   const { status } = useUpdateStatus();
 
-  const version = status?.current_version;
+  const version = status?.product_version ?? status?.current_version;
+  const officialBaseline =
+    status?.official_baseline_version ?? status?.current_version;
   if (!version) return null;
 
   const canUpdate = userCan(user, "update");
   const tooltip = canUpdate
-    ? t("header.currentVersionAdmin", { version })
-    : t("header.currentVersion", { version });
+    ? t("header.currentProductVersionAdmin", {
+        version,
+        baseline: officialBaseline,
+        defaultValue: `云迈产品 v${version}，官方基线 v${officialBaseline}，点击查看更新`,
+      })
+    : t("header.currentProductVersion", {
+        version,
+        baseline: officialBaseline,
+        defaultValue: `云迈产品 v${version}（官方基线 v${officialBaseline}）`,
+      });
   const label = `v${version}`;
+  const baselineLabel = officialBaseline
+    ? `官方基线 v${officialBaseline}`
+    : null;
 
   if (canUpdate) {
     return (
@@ -38,7 +51,10 @@ export default function CurrentVersionBadge({
           onClick={() => navigate("/admin/advanced?tab=updates")}
           aria-label={tooltip}
         >
-          {label}
+          <span>{label}</span>
+          {baselineLabel && (
+            <span className={styles.baselineBadge}>{baselineLabel}</span>
+          )}
         </button>
       </Tooltip>
     );
@@ -52,7 +68,10 @@ export default function CurrentVersionBadge({
         }`}
         aria-label={tooltip}
       >
-        {label}
+        <span>{label}</span>
+        {baselineLabel && (
+          <span className={styles.baselineBadge}>{baselineLabel}</span>
+        )}
       </span>
     </Tooltip>
   );
