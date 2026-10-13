@@ -18,6 +18,10 @@ async def test_create_list_get_delete(env):
     r = await c.get("/api/users", headers=auth)
     usernames = [u["username"] for u in r.json()]
     assert "alice" in usernames
+    current = next(u for u in r.json() if u["username"] == "admin")
+    assert current["is_current_user"] is True
+    alice = next(u for u in r.json() if u["username"] == "alice")
+    assert alice["is_current_user"] is False
 
     r = await c.get(f"/api/users/{uid}", headers=auth)
     assert r.json()["username"] == "alice"
@@ -100,6 +104,7 @@ async def test_admin_and_regular_user_identity_stays_bound_to_their_token(env):
     assert listed.status_code == 200, listed.text
     admin_row = next(row for row in listed.json() if row["username"] == "admin")
     assert admin_row["id"] == admin_profile["id"]
+    assert admin_row["is_current_user"] is True
 
     abcde_auth = bearer(await login(c, username="abcde12345", password="TestPass12"))
     abcde_me = await c.get("/api/auth/me", headers=abcde_auth)
