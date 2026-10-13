@@ -540,6 +540,21 @@ func (a *App) ShowClientUpdates() {
 		// Hidden windows initialise WebView2 on their first Show. Focusing before
 		// the controller is ready can terminate the application on Windows.
 	}
+	// Opening the client-local update surface from the tray, settings, or the
+	// ordinary-user dashboard entry should be useful immediately.  Retry an
+	// idle/failed check in the background; an existing check or a verified
+	// result is left alone.  This path never calls the admin-only /api/update
+	// endpoints.
+	if a.updater != nil {
+		state := a.updater.snapshot()
+		if state.Stage == "idle" || state.Stage == "error" {
+			includePrerelease := false
+			if a.store != nil {
+				includePrerelease = a.store.get().IncludePrerelease
+			}
+			go func() { _ = a.updater.check(includePrerelease) }()
+		}
+	}
 }
 func (a *App) HideClientUpdates() {
 	if a.updateWindow != nil {

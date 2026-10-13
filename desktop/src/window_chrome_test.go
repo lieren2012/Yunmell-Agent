@@ -74,6 +74,14 @@ func TestMainWindowMinimiseRemainsNativeAndTrayHasShowQuitActions(t *testing.T) 
 			t.Fatalf("tray wiring missing %q", needle)
 		}
 	}
+	clientUpdate, err := os.ReadFile("client_update.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(clientUpdate), `state.Stage == "idle" || state.Stage == "error"`) ||
+		!strings.Contains(string(clientUpdate), `go func() { _ = a.updater.check(includePrerelease) }()`) {
+		t.Fatal("opening the desktop update surface must retry the local updater without server permissions")
+	}
 }
 
 func TestSplashLoadingCardWrapsProgressAndStatus(t *testing.T) {
