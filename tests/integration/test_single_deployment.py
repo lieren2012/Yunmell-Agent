@@ -112,6 +112,47 @@ async def test_desktop_remote_identity_local_runtime_and_authority_binding(env, 
         assert (await local_client.get("/api/auth/me", headers=headers)).status_code == 401
 
 
+async def test_desktop_admin_management_requests_use_remote_admin_identity(env, tmp_path, monkeypatch):
+    """A desktop admin must retain remote admin access to management APIs.
+
+    The desktop process stores a passwordless local projection for runtime
+    isolation.  Management requests are forwarded with the encrypted remote
+    session token, so local projection permissions must not turn the remote
+    administrator into a 403 response.
+    """
+    remote_client, _remote_server, admin = env
+    monkeypatch.setenv("OCTOP_DESKTOP_CLIENT", "1")
+    monkeypatch.setenv("OCTOP_CONTROL_PLANE_URL", "http://management.example")
+    monkeypatch.setenv("OCTOP_HOME", str(tmp_path / "desktop-admin"))
+    async with octop_client(tmp_path / "desktop-admin") as (local_client, local_server):
+        identity = bridge(local_server)
+
+        async def remote(method, path, *, token=None, content=None, headers=None, authority=None):
+            outgoing = dict(headers or {})
+            if token:
+                outgoing["Authorization"] = "Bearer " + token
+            return await remote_client.request(method, "/api" + path, content=content, headers=outgoing)
+
+        monkeypatch.setattr(identity, "remote", remote)
+        login = await local_client.post(
+            "/api/auth/login", json={"username": "admin", "password": "TestPass12"}
+        )
+        assert login.status_code == 200, login.text
+        headers = {"Authorization": "Bearer " + login.json()["access_token"]}
+
+        profile = await local_client.get("/api/auth/me", headers=headers)
+        assert profile.status_code == 200, profile.text
+        assert profile.json()["username"] == "admin"
+        assert profile.json()["role"] == "admin"
+
+        listed = await local_client.get("/api/users", headers=headers)
+        assert listed.status_code == 200, listed.text
+        assert any(row["username"] == "admin" for row in listed.json())
+
+        providers = await local_client.get("/api/admin/providers", headers=headers)
+        assert providers.status_code == 200, providers.text
+
+
 async def test_desktop_logout_revokes_local_projection(env, tmp_path, monkeypatch):
     remote_client, _remote_server, admin = env
     await remote_client.put(
