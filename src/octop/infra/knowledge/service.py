@@ -102,10 +102,19 @@ class KnowledgeService:
         shared: bool = False,
         icon_name: str = "",
         max_documents: int = MAX_DOCS_PER_KB,
+        require_usable: bool = False,
     ) -> KnowledgeBaseRow:
-        assert_knowledge_usable(
-            self._services.settings_repo.get, getattr(self._services, "provider_repo", None)
-        )
+        # Personal knowledge-base metadata is local user data and can be
+        # created before the instance-wide embedding service is configured.
+        # Indexing and retrieval still enforce ``assert_knowledge_usable`` at
+        # their execution boundary; keeping creation independent lets a user
+        # prepare a private library while an administrator finishes the model
+        # setup.
+        if require_usable:
+            assert_knowledge_usable(
+                self._services.settings_repo.get,
+                getattr(self._services, "provider_repo", None),
+            )
         if max_documents < 0 or max_documents > MAX_KB_MAX_DOCUMENTS:
             raise ValueError(f"max_documents must be between 0 and {MAX_KB_MAX_DOCUMENTS}")
         owned = self._repo.count_bases_for_owner(owner_user_id)

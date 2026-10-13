@@ -50,6 +50,28 @@ async def test_feature_toggle_requires_knowledge_settings(env: Any) -> None:
     assert allowed.json()["feature_enabled"] is False
 
 
+async def test_personal_base_can_be_created_before_embedding_setup(env: Any) -> None:
+    client, _server, admin_auth = env
+    member_auth = await create_user(
+        client,
+        admin_auth,
+        username="kb_personal_unconfigured",
+        permissions=["knowledge_bases"],
+    )
+
+    created = await client.post(
+        "/api/knowledge-bases",
+        headers=member_auth,
+        json={"name": "我的本地资料"},
+    )
+
+    assert created.status_code == 201, created.text
+    assert created.json()["name"] == "我的本地资料"
+    listed = await client.get("/api/knowledge-bases", headers=member_auth)
+    assert listed.status_code == 200, listed.text
+    assert [row["name"] for row in listed.json()] == ["我的本地资料"]
+
+
 async def test_embedding_options_require_knowledge_settings(env: Any) -> None:
     client, _server, admin_auth = env
     page_auth = await create_user(client, admin_auth, username="kb_options_user")

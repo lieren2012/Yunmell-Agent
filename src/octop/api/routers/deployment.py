@@ -268,6 +268,7 @@ async def admin_create_enterprise_knowledge_base(
             shared=True,
             icon_name=body.icon_name.strip(),
             max_documents=body.max_documents,
+            require_usable=True,
         )
         return _enterprise_kb_payload(row)
     except (RuntimeError, ValueError) as exc:

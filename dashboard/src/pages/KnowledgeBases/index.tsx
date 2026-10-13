@@ -1938,13 +1938,14 @@ export default function KnowledgeBasesPage() {
   const showEnableGuide =
     !loading &&
     !basesError &&
+    canConfigureKb &&
     !usable &&
     personalBases.length === 0 &&
     libraryScope === "personal";
   const showEmptyGuide =
     !loading &&
     !basesError &&
-    usable &&
+    canUseKnowledge &&
     visibleBases.length === 0 &&
     libraryScope === "personal";
   const emptyLayoutClassName = styles.emptyLayout;
@@ -2029,7 +2030,11 @@ export default function KnowledgeBasesPage() {
             plain
             icon={setupMascot}
             title={t("knowledgeBases.emptyGuideTitle")}
-            description={t("knowledgeBases.emptyGuideDesc")}
+            description={
+              !usable && !canConfigureKb
+                ? t("knowledgeBases.unavailableDescriptionNonAdmin")
+                : t("knowledgeBases.emptyGuideDesc")
+            }
             steps={[
               {
                 label: t("knowledgeBases.emptyGuideStepWhat"),
@@ -2138,7 +2143,6 @@ export default function KnowledgeBasesPage() {
                   disabled={
                     !canUseKnowledge ||
                     libraryScope !== "personal" ||
-                    !usable ||
                     atBaseLimit
                   }
                   onClick={openCreate}
@@ -2340,6 +2344,15 @@ export default function KnowledgeBasesPage() {
                     onDragOver={handleDocsDragOver}
                     onDrop={handleDocsDrop}
                   >
+                    {!selected.read_only && !usable ? (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message={t(
+                          "knowledgeBases.unavailableDescriptionNonAdmin",
+                        )}
+                      />
+                    ) : null}
                     {selected.read_only ? (
                       <Alert
                         type="info"
@@ -2427,7 +2440,11 @@ export default function KnowledgeBasesPage() {
                             type="primary"
                             icon={<FileUp size={14} />}
                             loading={Boolean(uploadState)}
-                            disabled={isAtDocumentLimit || Boolean(uploadState)}
+                            disabled={
+                              !usable ||
+                              isAtDocumentLimit ||
+                              Boolean(uploadState)
+                            }
                             onClick={() => uploadRef.current?.click()}
                           >
                             {t("knowledgeBases.upload")}

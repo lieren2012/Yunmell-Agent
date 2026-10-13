@@ -537,7 +537,6 @@ async def create_base(
 ) -> dict[str, Any]:
     locale = resolve_request_locale(request)
     try:
-        _require_usable(server, request)
         base = _knowledge_service(server).create_base(
             owner_user_id=user.id,
             name=body.name.strip(),
