@@ -45,18 +45,12 @@ def test_prerelease_install_does_not_fall_back_to_older_stable(monkeypatch):
         lambda *a, **kw: io.BytesIO(json.dumps(releases).encode()),
     )
 
-    latest = update._fetch_yunmell_release(
-        stable_only=True, current_version="1.0.10b10"
-    )
+    latest = update._fetch_yunmell_release(stable_only=True, current_version="1.0.10b10")
     assert latest["version"] == "1.0.10b11"
     assert update.is_newer(latest["version"], "1.0.10b10")
 
-    current = update._fetch_yunmell_release(
-        stable_only=True, current_version="1.0.0"
-    )
+    current = update._fetch_yunmell_release(stable_only=True, current_version="1.0.0")
     assert current["version"] == "1.0.9"
 
-    beta = update._fetch_yunmell_release(
-        stable_only=False, current_version="1.0.0"
-    )
+    beta = update._fetch_yunmell_release(stable_only=False, current_version="1.0.0")
     assert beta["version"] == "1.0.10b11"

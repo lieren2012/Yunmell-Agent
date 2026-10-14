@@ -605,7 +605,12 @@ class AgentManager:
         """Create a new agent, persist to DB, and register with harness."""
         from octop.infra.deployment.connection import desktop_mode, management_address
 
-        if desktop_mode() and management_address() and spec.user_id is not None and not spec.default_model:
+        if (
+            desktop_mode()
+            and management_address()
+            and spec.user_id is not None
+            and not spec.default_model
+        ):
             from octop.infra.db.repos.deployment import DeploymentRepo
             from octop.infra.deployment.desktop import MODEL
 
@@ -617,7 +622,12 @@ class AgentManager:
                     spec.default_model = managed_ref
                 elif spec.default_model != managed_ref and not can_switch:
                     raise OctopError(ErrorCode.FORBIDDEN, "该角色只能使用企业默认模型", status=403)
-                elif spec.default_model != managed_ref and not self._repos.enterprise_repo.model_allowed_for_user(spec.user_id, spec.default_model):
+                elif (
+                    spec.default_model != managed_ref
+                    and not self._repos.enterprise_repo.model_allowed_for_user(
+                        spec.user_id, spec.default_model
+                    )
+                ):
                     raise OctopError(ErrorCode.FORBIDDEN, "所选模型未获企业授权", status=403)
         async with self._lock:
             self._assert_agent_name_available(spec.user_id, spec.name)

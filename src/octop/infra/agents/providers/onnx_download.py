@@ -242,6 +242,7 @@ def _progress_tqdm(on_progress: SnapshotProgressFn) -> type[Any] | None:
     try:
         from tqdm.auto import tqdm as Tqdm
     except ImportError:
+
         class ProgressTqdm:
             """Small HuggingFace-compatible fallback when tqdm is unavailable."""
 
@@ -252,7 +253,9 @@ def _progress_tqdm(on_progress: SnapshotProgressFn) -> type[Any] | None:
 
             def update(self, n: float | None = 1) -> None:
                 self.n += int(n or 0)
-                total = int(self.total) if self.total and "reconstruct" in self.desc.lower() else None
+                total = (
+                    int(self.total) if self.total and "reconstruct" in self.desc.lower() else None
+                )
                 on_progress(self.n, total, self.desc)
 
             def close(self) -> None:
@@ -477,4 +480,3 @@ def export_model_tree_for_cos(
     write_cos_manifest(dest, model_id=model_name, hf_repo=hf_repo)
     logger.info("Staged COS tree for %s at %s", model_name, dest)
     return dest
-

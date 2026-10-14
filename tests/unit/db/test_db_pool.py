@@ -81,9 +81,7 @@ def test_single_deployment_migration_adds_identity_and_registration_schema(db: S
         organization_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(organizations)").fetchall()
         }
-        team_columns = {
-            row["name"] for row in conn.execute("PRAGMA table_info(teams)").fetchall()
-        }
+        team_columns = {row["name"] for row in conn.execute("PRAGMA table_info(teams)").fetchall()}
     assert {"registration_open", "registration_review_required"}.issubset(organization_columns)
     assert "archived" in team_columns
 

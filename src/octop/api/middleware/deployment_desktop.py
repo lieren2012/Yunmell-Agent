@@ -64,9 +64,9 @@ def forwarded_response(
     receipt = remote.cookies.get(COOKIE)
     if receipt:
         bound_authority = authority if authority is not None else management_address()
-        encrypted = bridge(server).encrypt(
-            {"authority": bound_authority, "receipt": receipt}
-        ).decode()
+        encrypted = (
+            bridge(server).encrypt({"authority": bound_authority, "receipt": receipt}).decode()
+        )
         response.set_cookie(
             COOKIE,
             encrypted,
@@ -127,6 +127,7 @@ async def connection(request: Request, server: Any) -> Response:
 def install(app: Any, server: Any) -> None:
     desktop_enabled = desktop_mode()
     management_only = control_plane_only()
+
     @app.middleware("http")  # type: ignore[untyped-decorator]
     async def desktop_adapter(request: Request, call_next: Any) -> Any:
         path = request.url.path
@@ -175,12 +176,17 @@ def install(app: Any, server: Any) -> None:
             if path == "/api/auth/login":
                 authority = management_address()
                 remote = await client.remote(
-                    "POST", "/auth/deployment/login", content=await request.body(), headers=headers,
+                    "POST",
+                    "/auth/deployment/login",
+                    content=await request.body(),
+                    headers=headers,
                     authority=authority,
                 )
                 if remote.status_code != 200:
                     return forwarded_response(remote, server, authority=authority)
-                return JSONResponse(await client.adopt_login(dict(remote.json()), authority=authority))
+                return JSONResponse(
+                    await client.adopt_login(dict(remote.json()), authority=authority)
+                )
             if path in PUBLIC_AUTH:
                 authority = management_address()
                 remote = await client.remote(

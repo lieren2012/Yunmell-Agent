@@ -280,10 +280,7 @@ async def list_users(
 ) -> list[dict[str, Any]]:
     rows = server.user_manager.list_all(include_disabled=True)
     policy_map = server.services.user_policy_repo.list_by_user_ids([r.id for r in rows])
-    return [
-        _row_to_dict(r, policy_map.get(r.id), server, current_user_id=actor.id)
-        for r in rows
-    ]
+    return [_row_to_dict(r, policy_map.get(r.id), server, current_user_id=actor.id) for r in rows]
 
 
 @router.post("", status_code=201)

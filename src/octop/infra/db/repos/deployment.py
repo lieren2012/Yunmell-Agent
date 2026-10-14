@@ -15,32 +15,73 @@ class DeploymentRepo:
 
     def consolidate_default_team(self, organization_id: str, team_id: str) -> dict[str, Any]:
         with self.db.transaction() as connection:
-            legacy = connection.execute("SELECT organization_id,user_id,team_id,role FROM organization_members").fetchall()
+            legacy = connection.execute(
+                "SELECT organization_id,user_id,team_id,role FROM organization_members"
+            ).fetchall()
             users = connection.execute("SELECT id,role FROM users").fetchall()
             for user in users:
                 previous = [item for item in legacy if item["user_id"] == user["id"]]
                 roles = [str(item["role"]) for item in previous]
-                role = "owner" if user["role"] == "admin" or "owner" in roles else "admin" if "admin" in roles else "member"
-                connection.execute("INSERT INTO organization_members(organization_id,user_id,team_id,role,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(organization_id,user_id) DO UPDATE SET team_id = excluded.team_id,role = excluded.role,updated_at = excluded.updated_at",
-                                   (organization_id,user["id"],team_id,role,int(time.time()),int(time.time())))
-            source_teams = connection.execute("SELECT team_id FROM teams WHERE organization_id = ? AND team_id != ? AND archived = 0 ORDER BY created_at, id", (organization_id, team_id)).fetchall()
+                role = (
+                    "owner"
+                    if user["role"] == "admin" or "owner" in roles
+                    else "admin"
+                    if "admin" in roles
+                    else "member"
+                )
+                connection.execute(
+                    "INSERT INTO organization_members(organization_id,user_id,team_id,role,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(organization_id,user_id) DO UPDATE SET team_id = excluded.team_id,role = excluded.role,updated_at = excluded.updated_at",
+                    (
+                        organization_id,
+                        user["id"],
+                        team_id,
+                        role,
+                        int(time.time()),
+                        int(time.time()),
+                    ),
+                )
+            source_teams = connection.execute(
+                "SELECT team_id FROM teams WHERE organization_id = ? AND team_id != ? AND archived = 0 ORDER BY created_at, id",
+                (organization_id, team_id),
+            ).fetchall()
             for source in source_teams:
                 source_id = str(source["team_id"])
                 # Keep the first existing/default policy on the target; otherwise
                 # copy the source policy before archiving that team.
                 for table, columns in [
-                    ("team_quotas", "period,token_limit,request_limit,concurrency_limit,created_at,updated_at"),
-                    ("team_control_policy", "shell_enabled,browser_enabled,desktop_enabled,filesystem_enabled,network_enabled,created_at,updated_at"),
+                    (
+                        "team_quotas",
+                        "period,token_limit,request_limit,concurrency_limit,created_at,updated_at",
+                    ),
+                    (
+                        "team_control_policy",
+                        "shell_enabled,browser_enabled,desktop_enabled,filesystem_enabled,network_enabled,created_at,updated_at",
+                    ),
                 ]:
-                    target = connection.execute(f"SELECT 1 FROM {table} WHERE team_id = ?", (team_id,)).fetchone()
-                    source_row = connection.execute(f"SELECT {columns} FROM {table} WHERE team_id = ?", (source_id,)).fetchone()
+                    target = connection.execute(
+                        f"SELECT 1 FROM {table} WHERE team_id = ?", (team_id,)
+                    ).fetchone()
+                    source_row = connection.execute(
+                        f"SELECT {columns} FROM {table} WHERE team_id = ?", (source_id,)
+                    ).fetchone()
                     if target is None and source_row is not None:
                         values = [source_row[column] for column in columns.split(",")]
-                        connection.execute(f"INSERT INTO {table}(team_id,{columns}) VALUES ({','.join(['?'] * (len(values) + 1))})", [team_id, *values])
-                connection.execute("INSERT INTO team_model_allowlist(team_id,provider_name,model,created_at) SELECT ?,provider_name,model,created_at FROM team_model_allowlist WHERE team_id = ? ON CONFLICT(team_id,provider_name,model) DO NOTHING", (team_id, source_id))
-            connection.execute("UPDATE teams SET archived = 1 WHERE organization_id = ? AND team_id != ?", (organization_id, team_id))
-            connection.execute("UPDATE teams SET archived = 0, name = ? WHERE team_id = ?", ("默认团队",team_id))
-        return {"members":len(users), "default_team_id":team_id, "archived_teams_preserved":True}
+                        connection.execute(
+                            f"INSERT INTO {table}(team_id,{columns}) VALUES ({','.join(['?'] * (len(values) + 1))})",
+                            [team_id, *values],
+                        )
+                connection.execute(
+                    "INSERT INTO team_model_allowlist(team_id,provider_name,model,created_at) SELECT ?,provider_name,model,created_at FROM team_model_allowlist WHERE team_id = ? ON CONFLICT(team_id,provider_name,model) DO NOTHING",
+                    (team_id, source_id),
+                )
+            connection.execute(
+                "UPDATE teams SET archived = 1 WHERE organization_id = ? AND team_id != ?",
+                (organization_id, team_id),
+            )
+            connection.execute(
+                "UPDATE teams SET archived = 0, name = ? WHERE team_id = ?", ("默认团队", team_id)
+            )
+        return {"members": len(users), "default_team_id": team_id, "archived_teams_preserved": True}
 
     def record_model_usage(
         self, user_id: int, model: str, input_tokens: int, output_tokens: int

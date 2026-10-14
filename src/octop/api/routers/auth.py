@@ -201,13 +201,26 @@ async def login(
     user = await server.user_manager.authenticate(body.username, body.password)
     if user is None:
         local_row = _local_row(server, body.username)
-        if local_row is not None and local_row.approval_status != "approved" and local_row.password_hash:
+        if (
+            local_row is not None
+            and local_row.approval_status != "approved"
+            and local_row.password_hash
+        ):
             from octop.infra.users.password import verify_password
 
             if verify_password(body.password, local_row.password_hash):
                 status = local_row.approval_status
-                labels = {"pending": "注册申请正在等待管理员审核", "rejected": "注册申请已被驳回，请联系管理员", "needs_info": "注册申请需要补充资料，请联系管理员"}
-                raise OctopError(ErrorCode.AUTH_FAILED, labels.get(status, "账号尚未获准登录"), details={"registration_status": status}, status=401)
+                labels = {
+                    "pending": "注册申请正在等待管理员审核",
+                    "rejected": "注册申请已被驳回，请联系管理员",
+                    "needs_info": "注册申请需要补充资料，请联系管理员",
+                }
+                raise OctopError(
+                    ErrorCode.AUTH_FAILED,
+                    labels.get(status, "账号尚未获准登录"),
+                    details={"registration_status": status},
+                    status=401,
+                )
         if _directory_may_own(local_row):
             user = await _authenticate_ldap(server, body.username, body.password, client_ip)
     if user is None:

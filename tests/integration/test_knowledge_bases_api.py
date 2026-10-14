@@ -140,9 +140,7 @@ async def test_enterprise_knowledge_projection_and_admin_crud_preserve_personal_
     )
     assert denied.status_code == 403
     assert (
-        await client.delete(
-            f"/api/admin/enterprise/knowledge-bases/{kb_id}", headers=admin_auth
-        )
+        await client.delete(f"/api/admin/enterprise/knowledge-bases/{kb_id}", headers=admin_auth)
     ).status_code == 204
     missing = await client.get(f"/api/enterprise/knowledge-bases/{kb_id}", headers=member_auth)
     assert missing.status_code == 404

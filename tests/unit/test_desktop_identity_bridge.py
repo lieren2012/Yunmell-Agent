@@ -49,6 +49,9 @@ def test_regular_user_legacy_empty_policy_falls_back_to_profile_permissions() ->
 
 def test_explicit_empty_policy_version_keeps_user_restricted() -> None:
     profile = {"role": "user", "permissions": ["channels", "skill_packages"]}
-    assert DesktopIdentityBridge.local_permissions(
-        profile, {"local_permissions": [], "local_permissions_version": 1}
-    ) == []
+    assert (
+        DesktopIdentityBridge.local_permissions(
+            profile, {"local_permissions": [], "local_permissions_version": 1}
+        )
+        == []
+    )

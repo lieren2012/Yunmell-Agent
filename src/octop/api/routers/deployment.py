@@ -67,7 +67,9 @@ async def list_enterprise_knowledge_bases(
     return [_enterprise_kb_payload(row) for row in server.services.knowledge_repo.list_shared()]
 
 
-@enterprise_router.get("/knowledge-bases/{kb_id}", summary="Read enterprise knowledge-base projection")
+@enterprise_router.get(
+    "/knowledge-bases/{kb_id}", summary="Read enterprise knowledge-base projection"
+)
 async def get_enterprise_knowledge_base(
     kb_id: str,
     _user: User = Depends(require_permission("knowledge_bases")),
@@ -76,7 +78,9 @@ async def get_enterprise_knowledge_base(
     return _enterprise_kb_payload(_enterprise_kb(server, kb_id))
 
 
-@enterprise_router.get("/knowledge-bases/{kb_id}/documents", summary="List enterprise knowledge documents")
+@enterprise_router.get(
+    "/knowledge-bases/{kb_id}/documents", summary="List enterprise knowledge documents"
+)
 async def list_enterprise_knowledge_documents(
     kb_id: str,
     prefix: str | None = None,
@@ -123,6 +127,8 @@ async def preview_enterprise_knowledge_document(
     service = KnowledgeService(server.services)
     preview = service.preview_document(kb_id, doc_id, actor_user_id=user.id, is_admin=False)
     return {**preview, "scope": "enterprise", "read_only": True}
+
+
 COOKIE = "yunmell_registration_receipt"
 
 
@@ -253,7 +259,9 @@ async def admin_list_enterprise_knowledge_bases(
     return [_enterprise_kb_payload(row) for row in server.services.knowledge_repo.list_shared()]
 
 
-@admin_router.post("/knowledge-bases", status_code=201, summary="Create an enterprise knowledge base")
+@admin_router.post(
+    "/knowledge-bases", status_code=201, summary="Create an enterprise knowledge base"
+)
 async def admin_create_enterprise_knowledge_base(
     body: EnterpriseKnowledgeBaseBody,
     request: Request,
@@ -310,7 +318,9 @@ async def admin_update_enterprise_knowledge_base(
     return _enterprise_kb_payload(refreshed)
 
 
-@admin_router.delete("/knowledge-bases/{kb_id}", status_code=204, summary="Delete an enterprise knowledge base")
+@admin_router.delete(
+    "/knowledge-bases/{kb_id}", status_code=204, summary="Delete an enterprise knowledge base"
+)
 async def admin_delete_enterprise_knowledge_base(
     kb_id: str,
     _admin: User = Depends(require_admin()),
@@ -318,9 +328,7 @@ async def admin_delete_enterprise_knowledge_base(
 ) -> None:
     _enterprise_kb(server, kb_id)
     try:
-        KnowledgeService(server.services).delete_base(
-            kb_id, actor_user_id=_admin.id, is_admin=True
-        )
+        KnowledgeService(server.services).delete_base(kb_id, actor_user_id=_admin.id, is_admin=True)
     except (RuntimeError, ValueError, PermissionError) as exc:
         raise OctopError(ErrorCode.INTERNAL_ERROR, str(exc), status=400) from exc
 
@@ -331,11 +339,23 @@ class DeploymentSettings(BaseModel):
     review_required: bool
 
 
-@admin_router.post("/deployment/default-team/migrate", summary="Explicitly consolidate retained accounts into the default team without deleting history")
-async def migrate_team(actor: User = Depends(require_permission("users")), server: Any = Depends(get_server)) -> dict[str, Any]:
+@admin_router.post(
+    "/deployment/default-team/migrate",
+    summary="Explicitly consolidate retained accounts into the default team without deleting history",
+)
+async def migrate_team(
+    actor: User = Depends(require_permission("users")), server: Any = Depends(get_server)
+) -> dict[str, Any]:
     organization, team = deployment(server)
-    result = DeploymentRepo(server.services.db).consolidate_default_team(organization.organization_id, team.team_id)
-    server.services.audit_repo.write(actor=actor.username,action="deployment.default_team.migrate",target=team.team_id,payload=f"members={result['members']};history=preserved")
+    result = DeploymentRepo(server.services.db).consolidate_default_team(
+        organization.organization_id, team.team_id
+    )
+    server.services.audit_repo.write(
+        actor=actor.username,
+        action="deployment.default_team.migrate",
+        target=team.team_id,
+        payload=f"members={result['members']};history=preserved",
+    )
     return result
 
 

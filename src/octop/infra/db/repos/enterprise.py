@@ -215,7 +215,9 @@ class EnterpriseRepo:
     def list_teams(self, organization_id: str, *, include_archived: bool = False) -> list[TeamRow]:
         with self._db.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM teams WHERE organization_id = ?" + ("" if include_archived else " AND archived = 0") + " ORDER BY name, id",
+                "SELECT * FROM teams WHERE organization_id = ?"
+                + ("" if include_archived else " AND archived = 0")
+                + " ORDER BY name, id",
                 (organization_id,),
             ).fetchall()
         return map_rows(rows, TeamRow)

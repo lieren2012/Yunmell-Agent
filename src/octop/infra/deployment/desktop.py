@@ -119,7 +119,11 @@ class DesktopIdentityBridge:
                 ErrorCode.AUTH_FAILED, "服务地址已更换或登录状态失效，请重新登录", status=401
             )
         payload = self.decrypt(encrypted)
-        if payload.get("authority") != authority or not isinstance(payload.get("token"), str) or not payload.get("token"):
+        if (
+            payload.get("authority") != authority
+            or not isinstance(payload.get("token"), str)
+            or not payload.get("token")
+        ):
             raise OctopError(ErrorCode.AUTH_FAILED, "登录状态与当前服务不匹配", status=401)
         # b7 stored the same Fernet envelope without a session generation.  Add
         # one in place so an upgrade keeps the account projection while making
@@ -149,7 +153,9 @@ class DesktopIdentityBridge:
         self.require_authority(authority)
         repo = self.server.services.secret_repo
         key = f"yunmell.remote-session:{local_user_id}"
-        session_id = secrets.token_urlsafe(32) if new_session else self.session(local_user_id)["session_id"]
+        session_id = (
+            secrets.token_urlsafe(32) if new_session else self.session(local_user_id)["session_id"]
+        )
         value = self.encrypt({"authority": authority, "token": token, "session_id": session_id})
         repo.get_or_create(key, lambda: value)
         repo.rotate(key, value)
@@ -158,11 +164,20 @@ class DesktopIdentityBridge:
         services = self.server.services
         payload = self.session(user.id)
         now = int(time.time())
-        return str(jwt.encode({
-            "sub": str(user.id), "uname": user.username, "role": user.role,
-            "iat": now, "exp": now + services.config.access_token_ttl_seconds,
-            "yunmell_session": payload["session_id"],
-        }, services.secret_repo.get("jwt"), algorithm="HS256"))
+        return str(
+            jwt.encode(
+                {
+                    "sub": str(user.id),
+                    "uname": user.username,
+                    "role": user.role,
+                    "iat": now,
+                    "exp": now + services.config.access_token_ttl_seconds,
+                    "yunmell_session": payload["session_id"],
+                },
+                services.secret_repo.get("jwt"),
+                algorithm="HS256",
+            )
+        )
 
     def assert_local_session(self, local_id: int, claims: dict[str, Any]) -> None:
         expected = str(self.session(local_id)["session_id"])
@@ -181,7 +196,9 @@ class DesktopIdentityBridge:
         if task is not None and task is not current_task and not task.done():
             task.cancel()
         with self.server.services.db.transaction() as connection:
-            connection.execute("DELETE FROM secrets WHERE k = ?", (f"yunmell.remote-session:{local_id}",))
+            connection.execute(
+                "DELETE FROM secrets WHERE k = ?", (f"yunmell.remote-session:{local_id}",)
+            )
         # Do not continue using a previously refreshed identity after logout or
         # a remote revocation.  The local JWT session check is the hard gate;
         # dropping the snapshot also prevents stale profile data resurfacing
@@ -201,7 +218,9 @@ class DesktopIdentityBridge:
             return dict(payload)
         except (ValueError, TypeError):
             raise OctopError(
-                ErrorCode.INTERNAL_ERROR, "企业管理服务返回了无效数据，请检查服务地址或重试", status=503
+                ErrorCode.INTERNAL_ERROR,
+                "企业管理服务返回了无效数据，请检查服务地址或重试",
+                status=503,
             ) from None
 
     async def adopt_login(
@@ -227,18 +246,26 @@ class DesktopIdentityBridge:
                 existing = services.user_repo.get_by_username(internal_name)
                 # Reuse only a passwordless projection from an interrupted first login.
                 if existing is not None and existing.password_hash is not None:
-                    raise OctopError(ErrorCode.AUTH_FAILED, "本机身份冲突，请联系管理员", status=409)
-                local_id = existing.id if existing is not None else services.user_repo.create(
-                    username=internal_name,
-                    password_hash=None,
-                    role="user",
-                    display_name=profile.get("display_name") or profile["username"],
-                    locale=profile.get("locale") or "zh",
-                    permissions=profile.get("permissions") or [],
+                    raise OctopError(
+                        ErrorCode.AUTH_FAILED, "本机身份冲突，请联系管理员", status=409
+                    )
+                local_id = (
+                    existing.id
+                    if existing is not None
+                    else services.user_repo.create(
+                        username=internal_name,
+                        password_hash=None,
+                        role="user",
+                        display_name=profile.get("display_name") or profile["username"],
+                        locale=profile.get("locale") or "zh",
+                        permissions=profile.get("permissions") or [],
+                    )
                 )
                 repo.add_identity(authority, int(profile["id"]), local_id)
             repo.update_profile(local_id, profile)
-            self.save_token(local_id, str(payload["access_token"]), authority=authority, new_session=True)
+            self.save_token(
+                local_id, str(payload["access_token"]), authority=authority, new_session=True
+            )
             try:
                 context = await self._refresh_context(local_id)
             except Exception:
@@ -487,7 +514,9 @@ class DesktopIdentityBridge:
         repo = DeploymentRepo(self.server.services.db)
         if repo.local_identity(authority, profile["id"]) != local_id:
             self.revoke_session(local_id)
-            raise OctopError(ErrorCode.AUTH_FAILED, "企业身份与本机会话不匹配，请重新登录", status=401)
+            raise OctopError(
+                ErrorCode.AUTH_FAILED, "企业身份与本机会话不匹配，请重新登录", status=401
+            )
         renewed = response.headers.get("X-Octop-Access-Token")
         if renewed:
             self.save_token(local_id, renewed, authority=authority)
@@ -521,7 +550,9 @@ class DesktopIdentityBridge:
             )
         self.require_authority(authority)
         context = self.response_object(response)
-        if not isinstance(context.get("name"), str) or not isinstance(context.get("controls"), dict):
+        if not isinstance(context.get("name"), str) or not isinstance(
+            context.get("controls"), dict
+        ):
             raise OctopError(ErrorCode.INTERNAL_ERROR, "企业模型与权限响应无效，请重试", status=503)
         await self._apply_context(local_id, context)
         self.require_authority(authority)
@@ -578,12 +609,17 @@ class DesktopIdentityBridge:
                 )
                 await self.server.app_runtime.agent_registry.on_provider_changed(provider_name=name)
             elif (
-                provider.models_json != json.dumps(models) or not provider.enabled
-                or provider.base_url != base or provider.api_key != relay_key
+                provider.models_json != json.dumps(models)
+                or not provider.enabled
+                or provider.base_url != base
+                or provider.api_key != relay_key
             ):
                 services.provider_repo.update(
-                    provider.id, models_json=json.dumps(models), enabled=True,
-                    base_url=base, api_key=relay_key,
+                    provider.id,
+                    models_json=json.dumps(models),
+                    enabled=True,
+                    base_url=base,
+                    api_key=relay_key,
                 )
                 await self.server.app_runtime.agent_registry.on_provider_changed(provider_name=name)
         elif provider is not None and provider.enabled:
@@ -605,8 +641,7 @@ class DesktopIdentityBridge:
             ]
             enterprise.replace_allowed_models(
                 membership.team_id,
-                [(item["provider_name"], item["model"]) for item in existing_models]
-                + additions,
+                [(item["provider_name"], item["model"]) for item in existing_models] + additions,
             )
             controls = context["controls"]
             current = enterprise.get_control_policy(membership.team_id)

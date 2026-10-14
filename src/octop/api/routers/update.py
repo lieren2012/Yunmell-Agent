@@ -454,10 +454,7 @@ def _fetch_yunmell_release(
     with urllib.request.urlopen(req, timeout=10) as response:
         releases = json.loads(response.read().decode("utf-8"))
     published = [
-        release
-        for release in releases
-        if not release.get("draft")
-        and release.get("tag_name")
+        release for release in releases if not release.get("draft") and release.get("tag_name")
     ]
     keep_prereleases = bool(current_version and is_prerelease(current_version))
     candidates = (
