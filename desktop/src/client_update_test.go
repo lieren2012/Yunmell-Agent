@@ -145,30 +145,30 @@ func TestClientUpdaterRejectsDowngrades(t *testing.T) {
 }
 
 func TestClientUpdaterKeepsCurrentPrereleaseTrackWhenStableOnly(t *testing.T) {
-	// The installed client is 1.0.10b14. A stable-only check must not report the
-	// older 1.0.9 tag as latest, and must still offer a real b15 upgrade.
+	// The installed client is 1.0.10b16. A stable-only check must not report the
+	// older 1.0.9 tag as latest, and must still offer a real b17 upgrade.
 	u := testUpdater(t, []clientRelease{
 		{Tag: "v1.0.9"},
-		{Tag: "v1.0.10b14", Prerelease: true},
+		{Tag: "v1.0.10b15", Prerelease: true},
 	}, nil)
 	if err := u.check(false); err != nil {
 		t.Fatal(err)
 	}
-	if got := u.snapshot(); got.LatestVersion != "1.0.10b14" || got.HasUpdate {
+	if got := u.snapshot(); got.LatestVersion != "1.0.10b15" || got.HasUpdate {
 		t.Fatalf("current pre-release was treated as a downgrade: %+v", got)
 	}
 
 	body := []byte("next Yunmell installer")
-	asset := testUpdateAssetForVersion(body, "1.0.10b15")
+	asset := testUpdateAssetForVersion(body, "1.0.10b17")
 	u = testUpdater(t, []clientRelease{
 		{Tag: "v1.0.9"},
-		{Tag: "v1.0.10b14", Prerelease: true},
-		{Tag: "v1.0.10b15", Prerelease: true, Assets: []clientReleaseAsset{asset}},
+		{Tag: "v1.0.10b15", Prerelease: true},
+		{Tag: "v1.0.10b17", Prerelease: true, Assets: []clientReleaseAsset{asset}},
 	}, body)
 	if err := u.check(false); err != nil {
 		t.Fatal(err)
 	}
-	if got := u.snapshot(); got.LatestVersion != "1.0.10b15" || !got.HasUpdate {
+	if got := u.snapshot(); got.LatestVersion != "1.0.10b17" || !got.HasUpdate {
 		t.Fatalf("newer pre-release was not selected: %+v", got)
 	}
 }
