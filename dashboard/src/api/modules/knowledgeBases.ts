@@ -304,13 +304,29 @@ export const knowledgeBasesApi = {
     }),
 
   activateOnnx: (model: string) =>
-    request<{ enabled: boolean; model: string; ready: boolean }>(
+    request<{
+      enabled: boolean;
+      model: string;
+      ready: boolean;
+      personal_model?: string;
+      reindex_enqueued?: number;
+    }>(
       "/knowledge-bases/onnx-activate",
       {
         method: "POST",
         body: JSON.stringify({ model }),
       },
     ),
+
+  deletePersonalOnnx: (model: string) =>
+    request<{
+      ok: boolean;
+      removed: boolean;
+      model: string;
+      personal?: KnowledgeCapability["personal_local"];
+    }>(`/knowledge-bases/onnx-personal/${encodeURIComponent(model)}`, {
+      method: "DELETE",
+    }),
 
   get: (id: string) => request<KnowledgeBase>(`/knowledge-bases/${id}`),
 

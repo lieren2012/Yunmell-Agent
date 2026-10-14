@@ -29,8 +29,10 @@ from octop.infra.agents.providers.onnx_service import (
     DOWNLOAD_MANAGER,
     OnnxServiceConfig,
     assert_catalog_model,
+    delete_downloaded_model,
     ensure_local_embedding_deps_async,
     is_model_downloaded,
+    load_config,
     probe_local_model,
     save_config,
     status_payload,
@@ -405,29 +407,38 @@ async def embedding_options(
         description="Include the full local ONNX catalog instead of the three recommended models",
     ),
     server: OctopServer = Depends(get_server),
-    _admin: User = Depends(require_permission("knowledge_settings")),
+    _admin: User = Depends(_require_local_onnx_user),
 ) -> dict[str, Any]:
     assert server.services is not None
     remote = []
-    for provider in server.services.provider_repo.list_all():
-        if is_onnx_local_provider(
-            provider.name, provider_api_key=getattr(provider, "api_key", None)
-        ):
-            continue
-        models = [
-            {"id": str(model["id"]), "name": str(model.get("name") or model["id"])}
-            for model in provider.get_models()
-            if str(model.get("id") or "").strip()
-            and is_embedding_model(
-                model,
-                provider_name=provider.name,
-                provider_api_key=getattr(provider, "api_key", None),
-            )
-        ]
-        if models:
-            remote.append(
-                {"provider_id": str(provider.id), "provider_name": provider.name, "models": models}
-            )
+    # Remote providers and the enterprise/shared embedding picker remain an
+    # administrator concern.  Ordinary users receive the same local ONNX
+    # catalog from this endpoint so the personal-library settings can remain
+    # independent of the enterprise embedding gate.
+    if not hasattr(_admin, "is_admin") or getattr(_admin, "is_admin", False) or user_has_permission(_admin, "knowledge_settings"):
+        for provider in server.services.provider_repo.list_all():
+            if is_onnx_local_provider(
+                provider.name, provider_api_key=getattr(provider, "api_key", None)
+            ):
+                continue
+            models = [
+                {"id": str(model["id"]), "name": str(model.get("name") or model["id"])}
+                for model in provider.get_models()
+                if str(model.get("id") or "").strip()
+                and is_embedding_model(
+                    model,
+                    provider_name=provider.name,
+                    provider_api_key=getattr(provider, "api_key", None),
+                )
+            ]
+            if models:
+                remote.append(
+                    {
+                        "provider_id": str(provider.id),
+                        "provider_name": provider.name,
+                        "models": models,
+                    }
+                )
     return {
         "onnx": _onnx_options_for_knowledge(include_all=all_onnx is True),
         "remote": remote,
@@ -608,18 +619,45 @@ async def activate_onnx_service(
     try:
         model = _assert_personal_onnx_model_access(_, body.model.strip())
         await ensure_local_embedding_deps_async(allow_install=True)
-        _enable_onnx_service(server, model)
         assert server.services is not None
         allow_all = bool(
-            hasattr(_, "is_admin") and (_.is_admin or user_has_permission(_, "knowledge_settings"))
+            not hasattr(_, "is_admin")
+            or _.is_admin
+            or user_has_permission(_, "knowledge_settings")
         )
-        set_personal_embedding_model(server.services.settings_repo.set, model, allow_all=allow_all)
+        # The global ONNX service is the enterprise/shared setting.  Personal
+        # users only select their edge-local model; changing it must not alter
+        # the shared provider configuration.
+        if allow_all:
+            _enable_onnx_service(server, model)
+        reindex_enqueued = 0
+        personal_model = get_personal_capability(server.services.settings_repo.get).get(
+            "selected_model"
+        )
+        if not allow_all:
+            previous_model = personal_model
+            personal_model = set_personal_embedding_model(
+                server.services.settings_repo.set, model, allow_all=False
+            )
+            if (
+                previous_model != model
+                and getattr(server.services, "knowledge_repo", None) is not None
+            ):
+                reindex_enqueued = reindex_all_documents(
+                    server.services,
+                    model,
+                    personal_only=True,
+                    personal_owner_id=getattr(_, "id", None),
+                )
     except (RuntimeError, ValueError) as exc:
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server
         ) from exc
     assert server.services is not None
-    return status_payload(server.services.settings_repo.get, DOWNLOAD_MANAGER.state)
+    payload = status_payload(server.services.settings_repo.get, DOWNLOAD_MANAGER.state)
+    payload["personal_model"] = personal_model
+    payload["reindex_enqueued"] = reindex_enqueued
+    return payload
 
 
 @router.post("/onnx-test", summary="Probe the selected local ONNX embedding model")
@@ -634,6 +672,39 @@ async def test_onnx_model(
     """
     model = _assert_personal_onnx_model_access(_, body.model.strip())
     return await probe_local_model(model)
+
+
+@router.delete(
+    "/onnx-personal/{model_name:path}",
+    summary="Delete a cached personal ONNX embedding model",
+)
+async def delete_personal_onnx_model(
+    model_name: str,
+    request: Request,
+    server: OctopServer = Depends(get_server),
+    user: User = Depends(_require_local_onnx_user),
+) -> dict[str, Any]:
+    """Remove a local model without touching enterprise/shared indexes."""
+    try:
+        name = _assert_personal_onnx_model_access(user, model_name.strip())
+        assert server.services is not None
+        selected = get_personal_capability(server.services.settings_repo.get).get("selected_model")
+        if selected == name:
+            raise ValueError("select another personal model before deleting the active model")
+        enterprise = load_config(server.services.settings_repo.get)
+        if enterprise.enabled and enterprise.model == name:
+            raise ValueError("the enterprise embedding model is in use and cannot be deleted")
+        removed = delete_downloaded_model(name)
+    except (RuntimeError, ValueError) as exc:
+        raise _map_knowledge_error(
+            exc, locale=resolve_request_locale(request), server=server
+        ) from exc
+    return {
+        "ok": True,
+        "removed": removed,
+        "model": name,
+        "personal": get_personal_capability(server.services.settings_repo.get),
+    }
 
 
 @router.get("", summary="List visible knowledge bases")

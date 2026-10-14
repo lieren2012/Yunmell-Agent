@@ -94,19 +94,39 @@ def enqueue_index_document(services: Any, kb_id: str, doc_id: str) -> asyncio.Ta
 
 
 def reindex_all_documents(
-    services: Any, embedding_model: str, *, shared_only: bool = False
-) -> None:
+    services: Any,
+    embedding_model: str,
+    *,
+    shared_only: bool = False,
+    personal_only: bool = False,
+    personal_owner_id: int | None = None,
+) -> int:
     """Reset indexes after an embedding change and schedule fresh work.
 
-    Enterprise setting changes only touch shared bases.  Personal rows retain
-    their local ONNX model and are therefore not invalidated by a control-plane
-    provider update.
+    Enterprise setting changes only touch shared bases.  Personal model changes
+    can explicitly pass ``personal_only=True``; that path never checks the
+    enterprise embedding gate and never mutates shared rows.
     """
-    if not shared_only:
+    if shared_only and personal_only:
+        raise ValueError("shared_only and personal_only cannot both be enabled")
+    if not shared_only and not personal_only:
         documents = services.knowledge_repo.reindex_all_documents(embedding_model)
     else:
         documents = []
-        for base in services.knowledge_repo.list_shared():
+        bases = (
+            services.knowledge_repo.list_shared()
+            if shared_only
+            else [
+                base
+                for base in services.knowledge_repo.list_all()
+                if not base.shared
+                and (
+                    personal_owner_id is None
+                    or int(base.owner_user_id) == int(personal_owner_id)
+                )
+            ]
+        )
+        for base in bases:
             services.knowledge_repo.update_base(
                 base.id, embedding_model=embedding_model, embedding_dim=0
             )
@@ -121,6 +141,7 @@ def reindex_all_documents(
                     documents.append(refreshed)
     for document in documents:
         enqueue_index_document(services, document.kb_id, document.id)
+    return len(documents)
 
 
 def resume_pending_index_jobs(services: Any) -> None:
