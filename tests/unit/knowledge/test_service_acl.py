@@ -60,7 +60,9 @@ def test_create_base_allows_personal_metadata_when_embedding_is_unconfigured(
     kb = service.create_base(owner_user_id=owner, name="Prepared locally")
 
     assert kb.owner_user_id == owner
-    assert kb.embedding_model == ""
+    # Personal bases pick the deterministic local ONNX recommendation even
+    # before the model has been downloaded; indexing still reports readiness.
+    assert kb.embedding_model == "BAAI/bge-small-zh-v1.5"
 
 
 def test_update_base_allows_enabling_both_shared_and_default_open(

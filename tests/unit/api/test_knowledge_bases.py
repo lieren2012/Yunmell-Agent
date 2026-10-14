@@ -578,6 +578,30 @@ async def test_onnx_activate_enables_downloaded_service(
 
 
 @pytest.mark.asyncio
+async def test_personal_ocr_install_is_on_demand(monkeypatch: pytest.MonkeyPatch) -> None:
+    from octop.api.routers import knowledge_bases
+
+    async def install(*, backend: str) -> str:
+        assert backend == "onnx"
+        return "installed"
+
+    monkeypatch.setattr(knowledge_bases, "ensure_ocr_deps_async", install)
+    monkeypatch.setattr(knowledge_bases, "local_ocr_deps_available", lambda: True)
+
+    response = await knowledge_bases.install_personal_ocr(
+        request=_request(),
+        _=object(),
+    )
+
+    assert response == {
+        "status": "installed",
+        "ready": True,
+        "backend": "onnx",
+        "model": "rapidocr",
+    }
+
+
+@pytest.mark.asyncio
 async def test_rename_document_returns_row_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

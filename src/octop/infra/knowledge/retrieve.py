@@ -67,11 +67,6 @@ def _retrieve_context_sync(
     locale: str,
     visible_bases: Sequence[Any] | None,
 ) -> str:
-    assert_knowledge_usable(services.settings_repo.get, getattr(services, "provider_repo", None))
-    query_vectors = embed_knowledge_texts(services, [(query or "").strip()])
-    if not query_vectors:
-        return ""
-
     visible = visible_bases
     if visible is None:
         visible = (
@@ -83,9 +78,36 @@ def _retrieve_context_sync(
     selected_ids = _unique_ids(knowledge_base_ids)
 
     ranked: list[tuple[Any, Hit, Any]] = []
+    enterprise_checked = False
     for kb_id in selected_ids:
         base = visible_by_id.get(kb_id)
         if base is None:
+            continue
+        if base.shared and not enterprise_checked:
+            enterprise_checked = True
+            try:
+                assert_knowledge_usable(
+                    services.settings_repo.get, getattr(services, "provider_repo", None)
+                )
+            except Exception:
+                # An unavailable enterprise provider must not hide readable
+                # personal results selected in the same chat turn.
+                logger.warning("enterprise knowledge embedding unavailable", exc_info=True)
+                continue
+        try:
+            try:
+                query_vectors = embed_knowledge_texts(services, [(query or "").strip()], base=base)
+            except TypeError as exc:
+                if "unexpected keyword argument 'base'" not in str(exc):
+                    raise
+                query_vectors = embed_knowledge_texts(services, [(query or "").strip()])
+        except Exception:
+            # A missing local personal model (or a temporarily unavailable
+            # enterprise provider) should skip that scope while preserving
+            # results from other readable bases.
+            logger.warning("knowledge embedding skipped for base=%s", kb_id, exc_info=True)
+            continue
+        if not query_vectors:
             continue
         ready_documents = {
             document.id: document

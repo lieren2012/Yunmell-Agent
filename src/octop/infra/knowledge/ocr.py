@@ -177,9 +177,7 @@ def get_ocr_capability(settings_get: Any, provider_repo: Any = None) -> dict[str
     should_probe_local = config.backend == "onnx" and (config.enabled or bool(config.model))
     deps_available = local_ocr_deps_available() if should_probe_local else False
     prerequisites_ok = (
-        deps_available
-        if config.backend == "onnx"
-        else _remote_ready(provider, config.model)
+        deps_available if config.backend == "onnx" else _remote_ready(provider, config.model)
     )
     return {
         "enabled": config.enabled,
@@ -255,7 +253,17 @@ def require_ocr_extractor(services: Any) -> OcrExtractor:
     return _RemoteOcr(provider, config.model)
 
 
-def optional_ocr_extractor(services: Any) -> OcrExtractor | None:
+def optional_ocr_extractor(services: Any, *, personal: bool = False) -> OcrExtractor | None:
+    """Return an OCR extractor when available for the requested scope.
+
+    Enterprise OCR remains explicitly enabled through the shared settings.
+    Personal libraries may use the bundled local RapidOCR runtime without
+    inheriting that enterprise switch; remote OCR is never selected locally.
+    """
+    if personal:
+        if not local_ocr_deps_available():
+            return None
+        return _extract_local
     if not load_ocr_config(services.settings_repo.get).enabled:
         return None
 

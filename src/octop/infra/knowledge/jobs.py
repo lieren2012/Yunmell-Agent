@@ -34,22 +34,43 @@ def _get_index_semaphore() -> asyncio.Semaphore:
 def process_document(services: Any, kb_id: str, doc_id: str) -> None:
     """Synchronously parse, embed, and atomically replace one document's chunks."""
     repo = services.knowledge_repo
-    assert_knowledge_usable(services.settings_repo.get, getattr(services, "provider_repo", None))
     document = repo.get_document(doc_id)
     base = repo.get_base(kb_id)
     if document is None or document.kb_id != kb_id or base is None:
         raise LookupError("knowledge document or base not found")
+    # Enterprise/shared indexes retain the control-plane embedding gate.
+    # Personal indexes are edge-local and select their ONNX model below, so a
+    # missing enterprise provider must never prevent private indexing.
+    if base.shared:
+        assert_knowledge_usable(
+            services.settings_repo.get, getattr(services, "provider_repo", None)
+        )
     if document.is_dir:
         return
     repo.update_document(doc_id, status="processing", error_message="")
     try:
         path = document_path(kb_id, doc_id, document.filename)
-        text = parse_document(path, ocr=optional_ocr_extractor(services))
+        try:
+            ocr = optional_ocr_extractor(services, personal=not base.shared)
+        except TypeError as exc:
+            # Compatibility for test doubles and third-party integrations
+            # implementing the pre-scope one-argument helper.
+            if "unexpected keyword argument 'personal'" not in str(exc):
+                raise
+            ocr = optional_ocr_extractor(services)
+        text = parse_document(path, ocr=ocr)
         knobs = get_advanced_settings(services.settings_repo.get)
         chunks = chunk_text(text, size=knobs["chunk_size"], overlap=knobs["chunk_overlap"])
         if not (text or "").strip() or not chunks:
             raise ValueError("knowledge document has no extractable text")
-        embeddings = embed_knowledge_texts(services, chunks)
+        try:
+            embeddings = embed_knowledge_texts(services, chunks, base=base)
+        except TypeError as exc:
+            # Keep compatibility with small test/integration doubles written
+            # before the scope-aware ``base`` argument was introduced.
+            if "unexpected keyword argument 'base'" not in str(exc):
+                raise
+            embeddings = embed_knowledge_texts(services, chunks)
         KnowledgeIndex(kb_id).replace_doc_chunks(doc_id, chunks, embeddings)
         dimension = len(embeddings[0]) if embeddings else 0
         repo.update_document(doc_id, status="ready", error_message="", chunk_count=len(chunks))
@@ -72,9 +93,32 @@ def enqueue_index_document(services: Any, kb_id: str, doc_id: str) -> asyncio.Ta
     return asyncio.create_task(_run())
 
 
-def reindex_all_documents(services: Any, embedding_model: str) -> None:
-    """Reset every index to use ``embedding_model`` and schedule fresh work."""
-    documents = services.knowledge_repo.reindex_all_documents(embedding_model)
+def reindex_all_documents(
+    services: Any, embedding_model: str, *, shared_only: bool = False
+) -> None:
+    """Reset indexes after an embedding change and schedule fresh work.
+
+    Enterprise setting changes only touch shared bases.  Personal rows retain
+    their local ONNX model and are therefore not invalidated by a control-plane
+    provider update.
+    """
+    if not shared_only:
+        documents = services.knowledge_repo.reindex_all_documents(embedding_model)
+    else:
+        documents = []
+        for base in services.knowledge_repo.list_shared():
+            services.knowledge_repo.update_base(
+                base.id, embedding_model=embedding_model, embedding_dim=0
+            )
+            for document in services.knowledge_repo.list_documents(base.id):
+                if document.is_dir:
+                    continue
+                services.knowledge_repo.update_document(
+                    document.id, status="pending", error_message="", chunk_count=0
+                )
+                refreshed = services.knowledge_repo.get_document(document.id)
+                if refreshed is not None:
+                    documents.append(refreshed)
     for document in documents:
         enqueue_index_document(services, document.kb_id, document.id)
 

@@ -143,3 +143,27 @@ def test_remote_embedding_batches_large_input(monkeypatch) -> None:
     # Merged vectors stay aligned with input order.
     assert len(result) == 45
     assert result == [[float(i)] for i in range(45)]
+
+
+def test_personal_embedding_ignores_legacy_enterprise_row_model(monkeypatch) -> None:
+    services = SimpleNamespace(
+        settings_repo=SimpleNamespace(
+            get=lambda key: {
+                "knowledge_embedding_backend": "remote",
+                "knowledge_embedding_model": "enterprise-embed",
+            }.get(key)
+        ),
+        provider_repo=None,
+    )
+    base = SimpleNamespace(shared=False, embedding_model="enterprise-embed")
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(embed, "personal_embedding_model", lambda _get: "local-onnx")
+    monkeypatch.setattr(
+        embed,
+        "embed_texts",
+        lambda model, texts: calls.update(model=model, texts=texts) or [[1.0]],
+    )
+
+    assert embed.embed_knowledge_texts(services, ["private"], base=base) == [[1.0]]
+    assert calls == {"model": "local-onnx", "texts": ["private"]}

@@ -40,12 +40,15 @@ from octop.infra.knowledge.files import document_path
 from octop.infra.knowledge.gate import (
     assert_knowledge_usable,
     get_capability,
+    get_personal_capability,
     set_feature_enabled,
+    set_personal_embedding_model,
 )
 from octop.infra.knowledge.jobs import enqueue_index_document, reindex_all_documents
 from octop.infra.knowledge.ocr import (
     ensure_ocr_deps_async,
     get_ocr_capability,
+    local_ocr_deps_available,
     set_ocr_settings,
     validate_ocr_settings,
 )
@@ -57,6 +60,7 @@ from octop.infra.knowledge.service import (
 )
 from octop.infra.server import OctopServer
 from octop.infra.users.identity import User
+from octop.infra.users.permissions import user_has_permission
 from octop.infra.utils.locale import resolve_request_locale
 
 router = APIRouter(prefix="/knowledge-bases")
@@ -283,8 +287,17 @@ def _enable_onnx_service(server: OctopServer, model: str) -> None:
     )
 
 
-def _require_usable(server: OctopServer, request: Request) -> None:
+def _require_usable(server: OctopServer, request: Request, *, kb_id: str | None = None) -> None:
     assert server.services is not None
+    # Private libraries are indexed on the desktop with their own local ONNX
+    # model.  Their readiness is checked by the local embedding worker; do not
+    # gate them on the enterprise/shared embedding configuration.
+    if kb_id:
+        knowledge_repo = getattr(server.services, "knowledge_repo", None)
+        if knowledge_repo is not None:
+            base = knowledge_repo.get_base(kb_id)
+            if base is not None and not base.shared:
+                return
     try:
         assert_knowledge_usable(server.services.settings_repo.get, server.services.provider_repo)
     except (RuntimeError, ValueError) as exc:
@@ -304,7 +317,77 @@ def _capability_payload(server: OctopServer) -> dict[str, Any]:
         "max_docs_per_kb": MAX_DOCS_PER_KB,
         "max_document_bytes": _max_upload_bytes(server),
     }
+    # Personal libraries use an edge-local ONNX model.  Keep this status next
+    # to the enterprise capability so the dashboard never treats a remote
+    # enterprise embedding setting as a prerequisite for private documents.
+    personal = get_personal_capability(server.services.settings_repo.get)
+    personal_ocr_ready = local_ocr_deps_available()
+    personal["ocr"] = {
+        "enabled": True,
+        "backend": "onnx",
+        "model": "rapidocr",
+        "provider_id": "",
+        "prerequisites_ok": personal_ocr_ready,
+        "usable": personal_ocr_ready,
+        "checks": {
+            "deps_available": personal_ocr_ready,
+            "provider_ready": False,
+        },
+    }
+    # ``personal_local`` is the public desktop contract.  Keep the shorter
+    # aliases for bridges and older clients that already consume them.
+    payload["personal_local"] = personal
+    payload["personal"] = personal
+    # ``local`` is a short alias for desktop bridges and older clients that
+    # described this scope as the local library.
+    payload["local"] = personal
     return payload
+
+
+def _assert_personal_onnx_model_access(user: User, model: str) -> str:
+    """Validate a model for the local personal-library lifecycle.
+
+    Admins and users with the model/knowledge-settings permission retain the
+    full catalog.  A normal knowledge-base user may operate only the curated
+    recommended models; this keeps package/model downloads bounded while
+    allowing personal libraries to work without an enterprise admin role.
+    """
+    verified = assert_catalog_model(model)
+    # A few internal callers invoke the router function directly in unit
+    # tests, passing a sentinel instead of FastAPI's resolved User object.
+    # Dependency injection always supplies a real User in production.
+    if not hasattr(user, "is_admin"):
+        return verified
+    if user.is_admin or user_has_permission(user, "knowledge_settings"):
+        return verified
+    if not user_has_permission(user, "knowledge_bases"):
+        raise OctopError(
+            ErrorCode.FORBIDDEN,
+            "knowledge-base permission required",
+            details={"permission": "knowledge_bases"},
+        )
+    if verified not in ONNX_PRESET_MODEL_IDS:
+        raise OctopError(
+            ErrorCode.FORBIDDEN,
+            "personal libraries may use recommended local ONNX models only",
+            details={"scope": "personal", "model": verified},
+        )
+    return verified
+
+
+async def _require_local_onnx_user(user: User = Depends(current_user)) -> User:
+    """Allow personal-library users and the legacy knowledge-settings role."""
+    if (
+        user.is_admin
+        or user_has_permission(user, "knowledge_bases")
+        or user_has_permission(user, "knowledge_settings")
+    ):
+        return user
+    raise OctopError(
+        ErrorCode.FORBIDDEN,
+        "knowledge-base permission required",
+        details={"permission": "knowledge_bases"},
+    )
 
 
 @router.get("/capability", summary="Get knowledge-base feature capability")
@@ -460,7 +543,14 @@ async def put_feature(
         or previous["provider_id"] != capability["provider_id"]
         or ocr_changed
     ):
-        reindex_all_documents(server.services, capability["selected_model"])
+        try:
+            reindex_all_documents(server.services, capability["selected_model"], shared_only=True)
+        except TypeError as exc:
+            # Compatibility for integrations that still provide the original
+            # two-argument reindex callback.
+            if "unexpected keyword argument 'shared_only'" not in str(exc):
+                raise
+            reindex_all_documents(server.services, capability["selected_model"])
     return capability
 
 
@@ -468,10 +558,11 @@ async def put_feature(
 async def start_onnx_download(
     body: OnnxDownloadBody,
     request: Request,
-    _: User = Depends(require_permission("knowledge_settings")),
+    _: User = Depends(_require_local_onnx_user),
 ) -> dict[str, Any]:
     try:
-        state = await DOWNLOAD_MANAGER.start_download(body.model.strip())
+        model = _assert_personal_onnx_model_access(_, body.model.strip())
+        state = await DOWNLOAD_MANAGER.start_download(model)
     except (RuntimeError, ValueError) as exc:
         raise _map_knowledge_error(exc, locale=resolve_request_locale(request)) from exc
     return state.to_dict()
@@ -479,9 +570,32 @@ async def start_onnx_download(
 
 @router.get("/onnx-download-status", summary="Poll ONNX embedding model download progress")
 async def onnx_download_status(
-    _: User = Depends(require_permission("knowledge_settings")),
+    _: User = Depends(_require_local_onnx_user),
 ) -> dict[str, Any]:
     return DOWNLOAD_MANAGER.state.to_dict()
+
+
+@router.post("/personal-ocr-install", summary="Install local OCR for personal libraries")
+async def install_personal_ocr(
+    request: Request,
+    _: User = Depends(_require_local_onnx_user),
+) -> dict[str, Any]:
+    """Install RapidOCR on demand for ordinary knowledge-base users.
+
+    Personal OCR is local-only and independent from the enterprise OCR switch.
+    The install path uses the same fixed package allowlist as the administrator
+    setting, so callers cannot inject package names.
+    """
+    try:
+        outcome = await ensure_ocr_deps_async(backend="onnx")
+    except RuntimeError as exc:
+        raise _map_knowledge_error(exc, locale=resolve_request_locale(request)) from exc
+    return {
+        "status": outcome,
+        "ready": local_ocr_deps_available(),
+        "backend": "onnx",
+        "model": "rapidocr",
+    }
 
 
 @router.post("/onnx-activate", summary="Enable local ONNX service for a downloaded model")
@@ -489,11 +603,17 @@ async def activate_onnx_service(
     body: OnnxDownloadBody,
     request: Request,
     server: OctopServer = Depends(get_server),
-    _: User = Depends(require_permission("knowledge_settings")),
+    _: User = Depends(_require_local_onnx_user),
 ) -> dict[str, Any]:
     try:
+        model = _assert_personal_onnx_model_access(_, body.model.strip())
         await ensure_local_embedding_deps_async(allow_install=True)
-        _enable_onnx_service(server, body.model.strip())
+        _enable_onnx_service(server, model)
+        assert server.services is not None
+        allow_all = bool(
+            hasattr(_, "is_admin") and (_.is_admin or user_has_permission(_, "knowledge_settings"))
+        )
+        set_personal_embedding_model(server.services.settings_repo.set, model, allow_all=allow_all)
     except (RuntimeError, ValueError) as exc:
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server
@@ -505,14 +625,15 @@ async def activate_onnx_service(
 @router.post("/onnx-test", summary="Probe the selected local ONNX embedding model")
 async def test_onnx_model(
     body: OnnxDownloadBody,
-    _: User = Depends(require_permission("knowledge_settings")),
+    _: User = Depends(_require_local_onnx_user),
 ) -> dict[str, Any]:
     """Verify the model actually embeds, on-device.
 
     Mirrors ``/onnx-models/test`` for the knowledge-settings role: that one is
     gated on ``onnx_models``, which a knowledge-settings admin need not hold.
     """
-    return await probe_local_model(body.model.strip())
+    model = _assert_personal_onnx_model_access(_, body.model.strip())
+    return await probe_local_model(model)
 
 
 @router.get("", summary="List visible knowledge bases")
@@ -697,7 +818,7 @@ async def create_text_document(
 ) -> dict[str, Any]:
     locale = resolve_request_locale(request)
     try:
-        _require_usable(server, request)
+        _require_usable(server, request, kb_id=kb_id)
         document = _knowledge_service(server).create_text_document(
             kb_id,
             actor_user_id=user.id,
@@ -730,7 +851,7 @@ async def upload_document(
 ) -> dict[str, Any]:
     locale = resolve_request_locale(request)
     try:
-        _require_usable(server, request)
+        _require_usable(server, request, kb_id=kb_id)
         content = await read_upload_capped(
             upload,
             max_bytes=_max_upload_bytes(server),
@@ -840,7 +961,7 @@ async def update_text_document(
 ) -> dict[str, Any]:
     locale = resolve_request_locale(request)
     try:
-        _require_usable(server, request)
+        _require_usable(server, request, kb_id=kb_id)
         document = _knowledge_service(server).update_text_document(
             kb_id,
             doc_id,
@@ -916,7 +1037,7 @@ async def reindex_document(
     user: User = Depends(require_permission("knowledge_bases")),
 ) -> dict[str, Any]:
     try:
-        _require_usable(server, request)
+        _require_usable(server, request, kb_id=kb_id)
         document = _knowledge_service(server).reindex_document(
             kb_id, doc_id, actor_user_id=user.id, is_admin=_is_admin(user)
         )
@@ -937,7 +1058,7 @@ async def reindex_base(
     user: User = Depends(require_permission("knowledge_bases")),
 ) -> dict[str, int]:
     try:
-        _require_usable(server, request)
+        _require_usable(server, request, kb_id=kb_id)
         service = _knowledge_service(server)
         service.get_writable_base(kb_id, actor_user_id=user.id, is_admin=_is_admin(user))
         documents = [

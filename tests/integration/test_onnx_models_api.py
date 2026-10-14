@@ -142,3 +142,58 @@ async def test_knowledge_onnx_test_reports_missing_weights(
     assert resp.status_code == 200, resp.text
     assert resp.json()["ok"] is False
     assert "not downloaded" in resp.json()["error"]
+
+
+async def test_personal_user_can_download_recommended_onnx_without_settings_permission(
+    env: Any, monkeypatch: Any
+) -> None:
+    client, _server, admin_auth = env
+    from octop.api.routers import knowledge_bases
+    from tests.support.auth import create_user
+
+    member_auth = await create_user(
+        client,
+        admin_auth,
+        username="personal-onnx-user",
+        permissions=["knowledge_bases"],
+    )
+
+    class _State:
+        def to_dict(self) -> dict[str, object]:
+            return {
+                "status": "downloading",
+                "progress": 0.1,
+                "model_name": MODEL,
+                "error": None,
+            }
+
+    async def start(model: str) -> _State:
+        assert model == MODEL
+        return _State()
+
+    monkeypatch.setattr(knowledge_bases.DOWNLOAD_MANAGER, "start_download", start)
+    response = await client.post(
+        "/api/knowledge-bases/onnx-download",
+        headers=member_auth,
+        json={"model": MODEL},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["model_name"] == MODEL
+
+
+async def test_personal_capability_is_local_when_enterprise_embedding_is_unconfigured(
+    env: Any, monkeypatch: Any
+) -> None:
+    client, _server, admin_auth = env
+    from octop.infra.knowledge import gate
+
+    monkeypatch.setattr(gate, "local_embedding_deps_available", lambda: True)
+    monkeypatch.setattr(gate, "is_model_downloaded", lambda _model: False)
+    response = await client.get("/api/knowledge-bases/capability", headers=admin_auth)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["personal"]["backend"] == "onnx"
+    assert body["personal"]["feature_enabled"] is True
+    assert body["personal"]["download_required"] is True

@@ -117,3 +117,42 @@ def test_remote_capability_requires_enabled_embedding_provider(
     assert capability["provider_id"] == "7"
     assert capability["prerequisites_ok"] is True
     assert capability["checks"]["provider_ready"] is True
+
+
+def test_personal_capability_defaults_to_local_recommended_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = "BAAI/bge-small-zh-v1.5"
+    monkeypatch.setattr(gate, "ONNX_PRESET_MODEL_IDS", (model,))
+    monkeypatch.setattr(gate, "local_embedding_deps_available", lambda: True)
+    monkeypatch.setattr(gate, "is_model_downloaded", lambda candidate: candidate == model)
+
+    capability = gate.get_personal_capability(lambda _key: None)
+
+    assert capability["scope"] == "personal"
+    assert capability["backend"] == "onnx"
+    assert capability["selected_model"] == model
+    assert capability["feature_enabled"] is True
+    assert capability["usable"] is True
+    assert capability["download_required"] is False
+
+
+def test_personal_capability_does_not_read_enterprise_model_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local_model = "BAAI/bge-small-zh-v1.5"
+    monkeypatch.setattr(gate, "ONNX_PRESET_MODEL_IDS", (local_model,))
+    monkeypatch.setattr(gate, "local_embedding_deps_available", lambda: True)
+    monkeypatch.setattr(gate, "is_model_downloaded", lambda _candidate: False)
+    settings = {
+        "knowledge_embedding_backend": "remote",
+        "knowledge_embedding_model": "enterprise-embed",
+        "knowledge_bases_enabled": "true",
+    }
+
+    capability = gate.get_personal_capability(settings.get)
+
+    assert capability["selected_model"] == local_model
+    assert capability["backend"] == "onnx"
+    assert capability["checks"]["model_downloaded"] is False
+    assert capability["download_required"] is True

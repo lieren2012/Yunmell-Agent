@@ -9,14 +9,33 @@ import httpx
 from octop.infra.agents.providers.onnx_service import embed_texts
 from octop.infra.agents.providers.opencode_session import ensure_opencode_session_header
 from octop.infra.agents.providers.probe import provider_headers
+from octop.infra.knowledge.gate import personal_embedding_model
 
 # Remote OpenAI-compatible embedding APIs cap the number of inputs per request.
 _KNOWLEDGE_EMBEDDING_BATCH_LIMIT = 20
 
 
-def embed_knowledge_texts(services: Any, texts: list[str]) -> list[list[float]]:
-    """Embed texts through the selected knowledge embedding backend."""
+def embed_knowledge_texts(
+    services: Any,
+    texts: list[str],
+    *,
+    base: Any | None = None,
+) -> list[list[float]]:
+    """Embed texts through the selected knowledge embedding backend.
+
+    ``base`` identifies the knowledge scope.  Personal bases always use the
+    edge-local ONNX model, even when enterprise settings select a remote
+    provider (or are disabled entirely).  Omitting ``base`` preserves the
+    legacy enterprise behaviour for callers that do not have a base row yet.
+    """
     settings = services.settings_repo
+    if base is not None and not bool(getattr(base, "shared", False)):
+        # A personal row may have been created by an older server while the
+        # enterprise setting pointed at a remote model.  Always resolve the
+        # edge-local selection from its dedicated setting instead of trusting
+        # that legacy row value.
+        model = personal_embedding_model(settings.get)
+        return embed_texts(model, texts)
     backend = (settings.get("knowledge_embedding_backend") or "onnx").strip().lower()
     model = (settings.get("knowledge_embedding_model") or "").strip()
     if backend != "remote":
