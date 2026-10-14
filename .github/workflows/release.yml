@@ -82,7 +82,14 @@ jobs:
 
   github-release:
     name: Create GitHub Release
-    needs: publish
+    # Yunmell keeps its packages private to GitHub Releases and does not
+    # publish to PyPI.  Depend on the build artifact directly so the release
+    # job still runs when the TencentCloud-only PyPI job is skipped.
+    needs: build
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') &&
+      (github.repository == 'TencentCloud/Octop' ||
+       github.repository == 'lieren2012/Yunmell-Agent')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
