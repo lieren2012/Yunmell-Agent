@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO, cast
 
 import click
 
@@ -45,7 +46,8 @@ def list_agents() -> None:
 class _Progress:
     def __init__(self, locale: str) -> None:
         self.locale = locale
-        self.terminal = click.get_text_stream("stdout").isatty()
+        stream_factory = cast(Callable[[str], TextIO], click.get_text_stream)
+        self.terminal = stream_factory("stdout").isatty()
         self.phase = ""
         self.elapsed = -5
         self.scanned: object = None
