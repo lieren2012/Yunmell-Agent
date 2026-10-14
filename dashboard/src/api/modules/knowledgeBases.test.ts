@@ -1,17 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { request, requestUpload } = vi.hoisted(() => ({
+const { bridgeAgentHeaders, request, requestUpload } = vi.hoisted(() => ({
+  bridgeAgentHeaders: vi.fn(() => undefined),
   request: vi.fn(),
   requestUpload: vi.fn(),
 }));
 
-vi.mock("../request", () => ({ request, requestUpload }));
+vi.mock("../request", () => ({ bridgeAgentHeaders, request, requestUpload }));
 
 import { knowledgeBasesApi } from "./knowledgeBases";
 
 beforeEach(() => {
   request.mockClear();
   requestUpload.mockClear();
+  bridgeAgentHeaders.mockClear();
 });
 
 describe("knowledgeBasesApi", () => {
@@ -22,7 +24,9 @@ describe("knowledgeBasesApi", () => {
     knowledgeBasesApi.getOnnxDownloadStatus();
     knowledgeBasesApi.activateOnnx("BAAI/bge-small-zh-v1.5");
 
-    expect(request).toHaveBeenNthCalledWith(1, "/knowledge-bases/capability");
+    expect(request).toHaveBeenNthCalledWith(1, "/knowledge-bases/capability", {
+      headers: undefined,
+    });
     expect(request).toHaveBeenNthCalledWith(2, "/knowledge-bases/feature", {
       method: "PUT",
       body: JSON.stringify({ enabled: true, model: "BAAI/bge-small" }),
@@ -63,6 +67,41 @@ describe("knowledgeBasesApi", () => {
     );
   });
 
+  it("installs personal OCR through the knowledge-base permission", () => {
+    knowledgeBasesApi.installPersonalOcr();
+    expect(request).toHaveBeenCalledWith(
+      "/knowledge-bases/personal-ocr-install",
+      { method: "POST" },
+    );
+  });
+
+  it("uses the enterprise projection endpoints and maps rows to read-only bases", async () => {
+    request.mockResolvedValueOnce([
+      {
+        knowledge_base_id: "enterprise-1",
+        name: "企业手册",
+        description: "共享资料",
+        icon_name: "building",
+        embedding_model: "bge",
+        embedding_dim: 768,
+        doc_count: 3,
+        max_documents: 100,
+        created_at: 1,
+        updated_at: 2,
+        scope: "enterprise",
+        read_only: true,
+      },
+    ]);
+    const rows = await knowledgeBasesApi.listEnterprise();
+    expect(request).toHaveBeenCalledWith("/enterprise/knowledge-bases");
+    expect(rows[0]).toMatchObject({
+      id: "enterprise-1",
+      owner_user_id: 0,
+      scope: "enterprise",
+      read_only: true,
+    });
+  });
+
   it("uses nested document endpoints", () => {
     const file = new File(["document"], "notes.md", { type: "text/markdown" });
     knowledgeBasesApi.uploadDocument("kb-1", file);
@@ -83,6 +122,39 @@ describe("knowledgeBasesApi", () => {
     expect(request).toHaveBeenNthCalledWith(
       2,
       "/knowledge-bases/kb-1/documents/doc-1/preview",
+    );
+  });
+
+  it("keeps enterprise documents read-only and uses the enterprise preview endpoint", async () => {
+    request.mockResolvedValueOnce([
+      {
+        id: "doc-1",
+        document_id: "doc-1",
+        kb_id: "enterprise-1",
+        path: "guide.md",
+        filename: "guide.md",
+        is_dir: false,
+        content_type: "text/markdown",
+        byte_size: 12,
+        content_hash: "hash",
+        status: "ready",
+        error_message: "",
+        chunk_count: 1,
+        created_at: 1,
+        updated_at: 2,
+        scope: "enterprise",
+        read_only: true,
+      },
+    ]);
+    const docs = await knowledgeBasesApi.listEnterpriseDocuments("enterprise-1");
+    expect(request).toHaveBeenCalledWith(
+      "/enterprise/knowledge-bases/enterprise-1/documents",
+    );
+    expect(docs[0]?.has_original).toBe(false);
+
+    knowledgeBasesApi.previewEnterpriseDocument("enterprise-1", "doc-1");
+    expect(request).toHaveBeenLastCalledWith(
+      "/enterprise/knowledge-bases/enterprise-1/documents/doc-1/preview",
     );
   });
 

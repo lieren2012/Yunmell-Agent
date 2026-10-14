@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 )
 
 func mustEnv(cmd *exec.Cmd, extra map[string]string) {
@@ -23,10 +25,14 @@ func startOctop(root string, port int) (*exec.Cmd, error) {
 	cmd := exec.Command(py, launch, "run", "--host", "127.0.0.1", "--port", strconv.Itoa(port))
 	cmd.Dir = root
 	mustEnv(cmd, map[string]string{
+		"OCTOP_DESKTOP_CLIENT": "1",
+		"OCTOP_CONTROL_PLANE_URL": loadSettings().ControlPlaneURL,
 		"OCTOP_HOME":           octopHome(),
 		"OCTOP_GREEN_PACKAGES": filepath.Join(root, "packages"),
 		"PYTHONNOUSERSITE":     "1",
 		"PYTHONPATH":           "",
+		"NO_PROXY":             runtimeNoProxy(),
+		"no_proxy":             runtimeNoProxy(),
 	})
 	configureProcGroup(cmd)
 	if runtime.GOOS == "linux" {
@@ -42,6 +48,15 @@ func startOctop(root string, port int) (*exec.Cmd, error) {
 		return nil, err
 	}
 	return cmd, nil
+}
+
+func runtimeNoProxy() string {
+	values := []string{os.Getenv("NO_PROXY"), os.Getenv("no_proxy"), "localhost", "127.0.0.1", "::1"}
+	settings := loadSettings()
+	if endpoint, err := url.Parse(settings.ControlPlaneURL); err == nil && privateHealthHost(endpoint.Hostname()) {
+		values = append(values, endpoint.Hostname())
+	}
+	return strings.Join(values, ",")
 }
 
 func stopOctop(cmd *exec.Cmd) {

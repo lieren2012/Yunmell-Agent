@@ -7,6 +7,7 @@ import json
 import os
 import threading
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -109,6 +110,19 @@ def test_inject_gateway_tools_skips_empty_host_configs() -> None:
         mcp_server_configs={},
     )
     agent.inject_mcp_tools.assert_not_called()
+
+
+def test_runtime_state_uses_live_harness_as_source_of_truth(manager: AgentManager) -> None:
+    """A stale DB ``running`` flag cannot make an unloaded expert chat-ready."""
+    row = replace(_row(agent_id="stale"), last_state="running")
+    harness = MagicMock()
+    harness.get_agent.side_effect = KeyError("stale")
+    manager._harness_manager = harness
+    assert manager.runtime_state("stale", row) == "stopped"
+
+    harness.get_agent.side_effect = None
+    harness.get_agent.return_value = MagicMock()
+    assert manager.runtime_state("stale", row) == "running"
 
 
 def test_default_mcp_servers_empty_for_team_host(manager: AgentManager) -> None:

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Octop</title>
+    <title>云迈智能体</title>
     <script>
       document.documentElement.dataset.chrome = /Mac|iPhone|iPad/.test(
         navigator.userAgent,
@@ -33,9 +33,9 @@
         --text-secondary: #4b5563;
         --text-tertiary: #9ca3af;
         --border: #e5e7eb;
-        --brand: #e85d75;
-        --brand-hover: #d14a62;
-        --brand-soft: #fde8ec;
+        --brand: #2563eb;
+        --brand-hover: #1d4ed8;
+        --brand-soft: #dbeafe;
         --on-brand: #ffffff;
         --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.03);
         --radius: 12px;
@@ -236,6 +236,22 @@
         outline: none;
       }
       select:focus {
+        border-color: var(--brand);
+        box-shadow: 0 0 0 3px rgba(232, 93, 117, 0.12);
+      }
+      .text-input {
+        width: 190px;
+        min-width: 0;
+        font: inherit;
+        font-size: 12px;
+        color: var(--text-primary);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 7px 9px;
+        outline: none;
+      }
+      .text-input:focus {
         border-color: var(--brand);
         box-shadow: 0 0 0 3px rgba(232, 93, 117, 0.12);
       }
@@ -488,10 +504,10 @@
         <img
           id="mascot"
           src="/octop-mascot-peek.webp"
-          alt="Octop"
+          alt="云迈智能体"
           draggable="false"
         />
-        <p class="loading-brand" id="loading-brand">Octop</p>
+        <p class="loading-brand" id="loading-brand">云迈智能体</p>
         <p class="loading-hint" id="loading-hint">
           正在检查运行环境，可能需要几分钟。
         </p>
@@ -500,15 +516,37 @@
             <span class="loading-bar-fill"></span>
           </div>
           <p class="loading-status" id="status">正在启动，请稍候…</p>
+          <div class="actions" id="startup-actions">
+            <button id="retry-startup" type="button">重试启动</button>
+            <button id="startup-settings" type="button">连接设置</button>
+            <button id="startup-updates" type="button">客户端更新</button>
+          </div>
+          <pre id="startup-details" style="white-space:pre-wrap;text-align:left;font-size:12px;color:var(--text-tertiary);width:100%"></pre>
         </div>
       </div>
     </div>
 
     <div id="settings-panel" class="hidden">
       <div class="wrap">
-        <h1 id="title">Octop 设置</h1>
+        <h1 id="title">云迈智能体设置</h1>
         <p class="subtitle" id="subtitle">桌面端偏好</p>
         <div class="card">
+          <div class="row">
+            <div>
+              <div class="label" id="l-control-plane">控制面地址</div>
+              <small id="h-control-plane"
+                >填写服务器地址；留空使用本机内置运行时，修改后重启客户端</small
+              >
+            </div>
+            <input
+              class="text-input"
+              id="control-plane-url"
+              type="url"
+              placeholder="留空 = 本机"
+              spellcheck="false"
+              autocomplete="url"
+            />
+          </div>
           <div class="row">
             <div>
               <div class="label" id="l-lang">语言 / Language</div>
@@ -533,9 +571,9 @@
           </div>
           <div class="row">
             <div>
-              <div class="label" id="l-tray">最小化到托盘</div>
+              <div class="label" id="l-tray">关闭窗口时隐藏到托盘</div>
               <small id="h-tray"
-                >点击最小化时隐藏窗口并保留在系统托盘</small
+                >点击右上角关闭时隐藏窗口并保留在系统托盘</small
               >
             </div>
             <label class="switch">
@@ -555,9 +593,10 @@
           </div>
         </div>
         <div class="actions">
-          <button class="primary" id="show-main">显示 Octop</button>
+          <button class="primary" id="show-main">显示云迈智能体</button>
           <button class="ghost" id="quit">退出</button>
         </div>
+        <button type="button" id="client-updates" style="margin-top: 12px">检查客户端更新</button>
         <p class="status hidden" id="settings-status"></p>
       </div>
     </div>
@@ -568,17 +607,20 @@
         zh: {
           statusWait: "正在启动，请稍候…",
           loadingHint: "正在检查运行环境，可能需要几分钟。",
-          title: "Octop 设置",
+          title: "云迈智能体设置",
           subtitle: "桌面端偏好",
+          controlPlane: "控制面地址",
+          controlPlaneH: "填写企业管理地址；保存后点击重试启动，本地数据保留",
+          controlPlanePlaceholder: "留空 = 本机",
           lang: "语言",
           langH: "选择偏好语言 / Choose your preferred language",
           auto: "开机启动",
           autoH: "登录系统后自动启动",
-          tray: "最小化到托盘",
-          trayH: "点击最小化时隐藏窗口并保留在系统托盘",
+          tray: "关闭窗口时隐藏到托盘",
+          trayH: "点击右上角关闭时隐藏窗口并保留在系统托盘",
           sleep: "防止系统休眠",
           sleepH: "应用运行期间阻止系统自动休眠",
-          showMain: "显示 Octop",
+          showMain: "显示云迈智能体",
           quit: "退出",
           winGroup: "窗口控制",
           winMin: "最小化",
@@ -588,17 +630,20 @@
         en: {
           statusWait: "Starting, please wait…",
           loadingHint: "Checking the runtime. This may take a few minutes.",
-          title: "Octop Settings",
+          title: "云迈智能体设置",
           subtitle: "Desktop preferences",
+          controlPlane: "Control plane URL",
+          controlPlaneH: "Set the management address, then retry startup. Local data is preserved.",
+          controlPlanePlaceholder: "Empty = local",
           lang: "Language",
           langH: "Choose your preferred language",
           auto: "Launch at login",
           autoH: "Start automatically after you sign in",
-          tray: "Minimize to tray",
-          trayH: "Hide the window on minimize and keep Octop in the tray",
+          tray: "Hide to tray when closing",
+      trayH: "Hide the window on close and keep 云迈智能体 in the tray",
           sleep: "Prevent system sleep",
-          sleepH: "Keeps the system awake while Octop is running",
-          showMain: "Show Octop",
+      sleepH: "Keeps the system awake while 云迈智能体 is running",
+      showMain: "Show 云迈智能体",
           quit: "Quit",
           winGroup: "Window controls",
           winMin: "Minimize",
@@ -624,6 +669,10 @@
         const t = copy[locale] || copy.en;
         document.getElementById("title").textContent = t.title;
         document.getElementById("subtitle").textContent = t.subtitle;
+        document.getElementById("l-control-plane").textContent = t.controlPlane;
+        document.getElementById("h-control-plane").textContent = t.controlPlaneH;
+        document.getElementById("control-plane-url").placeholder =
+          t.controlPlanePlaceholder;
         document.getElementById("l-lang").textContent = t.lang;
         document.getElementById("h-lang").textContent = t.langH;
         document.getElementById("l-auto").textContent = t.auto;
@@ -687,6 +736,7 @@
 
       function current() {
         return {
+          controlPlaneUrl: document.getElementById("control-plane-url").value,
           locale: document.getElementById("locale").value,
           autostart: document.getElementById("autostart").checked,
           minimizeToTray: document.getElementById("tray").checked,
@@ -726,6 +776,25 @@
       const settingsMode =
         new URLSearchParams(window.location.search).get("settings") === "1";
       const s = await call("GetSettingsStatus");
+      function renderStartup(state) {
+        if (state.message) document.getElementById("status").textContent = state.message;
+        document.getElementById("retry-startup").disabled = !!state.busy;
+        document.getElementById("loading-panel").classList.toggle("is-error", state.phase === "error");
+        const lines = [];
+        for (const [name, health] of [["企业管理端",state.controlPlane],["本机运行时",state.localRuntime]]) {
+          if (!health?.target) continue;
+          lines.push(`${name}：${health.target}\n${health.route === "direct" ? "直连" : "环境代理"} · HTTP ${health.httpStatus || "尚未响应"} · ${health.detail}`);
+        }
+        document.getElementById("startup-details").textContent = lines.join("\n\n");
+      }
+      document.getElementById("retry-startup").onclick = async () => {
+        try { await call("RetryStartup"); } catch (error) { document.getElementById("status").textContent = String(error); }
+      };
+      document.getElementById("startup-settings").onclick = () => call("ShowConnectionSettings");
+      document.getElementById("startup-updates").onclick = () => call("ShowClientUpdates");
+      Events.On("desktop:startup", () => { void call("GetStartupStatus").then(renderStartup); });
+      void call("GetStartupStatus").then(renderStartup);
+      document.getElementById("client-updates").addEventListener("click", () => call("ShowClientUpdates"));
       const locale = s.locale || "en";
       document.getElementById("status").textContent =
         (copy[locale] || copy.en).statusWait;
@@ -735,11 +804,19 @@
         document.getElementById("loading-panel").classList.add("hidden");
         document.getElementById("settings-panel").classList.remove("hidden");
         document.getElementById("locale").value = locale;
+        document.getElementById("control-plane-url").value =
+          s.controlPlaneUrl || "";
         document.getElementById("autostart").checked = !!s.autostart;
         document.getElementById("tray").checked = s.minimizeToTray !== false;
         document.getElementById("sleep").checked = !!s.preventSleep;
 
-        for (const id of ["locale", "autostart", "tray", "sleep"]) {
+        for (const id of [
+          "control-plane-url",
+          "locale",
+          "autostart",
+          "tray",
+          "sleep",
+        ]) {
           document.getElementById(id).addEventListener("change", persist);
         }
         document

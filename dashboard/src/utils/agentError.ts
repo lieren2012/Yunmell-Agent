@@ -63,9 +63,15 @@ export function formatAgentError(
  */
 export function isAgentChatReady(
   state: string | null | undefined,
-  agent?: { bridge?: boolean; bridge_disconnected?: boolean } | null,
+  agent?: {
+    bridge?: boolean;
+    bridge_disconnected?: boolean;
+    /** Live runtime projection from GET /agents; absent for legacy callers. */
+    running?: boolean;
+  } | null,
 ): boolean {
   if (agent?.bridge) return !agent.bridge_disconnected;
+  if (typeof agent?.running === "boolean") return agent.running;
   return state === "running";
 }
 

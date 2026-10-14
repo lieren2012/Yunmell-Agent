@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -17,20 +20,30 @@ const (
 
 // Settings is persisted at ~/.octop/desktop-settings.json
 type Settings struct {
-	Locale         Locale `json:"locale"`
-	Autostart      bool   `json:"autostart"`
-	MinimizeToTray bool   `json:"minimizeToTray"`
-	PreventSleep   bool   `json:"preventSleep"`
-	Port           int    `json:"port,omitempty"`
+	Locale    Locale `json:"locale"`
+	Autostart bool   `json:"autostart"`
+	// MinimizeToTray is retained as the JSON/API name for compatibility with
+	// existing settings files. Its behavior is close-to-tray: a title-bar
+	// minimise always remains a normal Windows minimise, while closing the
+	// window may hide it in the tray when this flag is enabled.
+	MinimizeToTray bool `json:"minimizeToTray"`
+	PreventSleep   bool `json:"preventSleep"`
+	Port           int  `json:"port,omitempty"`
+	// ControlPlaneURL selects the remote management/login service. Empty means
+	// the desktop starts and uses its bundled local runtime.
+	ControlPlaneURL   string `json:"controlPlaneUrl,omitempty"`
+	UpdateRepository  string `json:"updateRepository,omitempty"`
+	IncludePrerelease bool   `json:"includePrerelease,omitempty"`
 }
 
 func defaultSettings() Settings {
 	return Settings{
-		Locale:         LocaleEN,
-		Autostart:      false,
-		MinimizeToTray: true,
-		PreventSleep:   false,
-		Port:           8088,
+		Locale:          LocaleEN,
+		Autostart:       false,
+		MinimizeToTray:  true,
+		PreventSleep:    false,
+		Port:            8088,
+		ControlPlaneURL: "https://6602-b3-agent.yun.cab",
 	}
 }
 
@@ -87,11 +100,46 @@ func (st *settingsStore) get() Settings {
 	return st.cur
 }
 
+func (st *settingsStore) reload() error {
+	data, err := os.ReadFile(settingsPath())
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	next := defaultSettings()
+	if err = json.Unmarshal(data, &next); err != nil {
+		return fmt.Errorf("客户端设置文件格式无效；请先修正设置")
+	}
+	if next.Port == 0 {
+		next.Port = 8088
+	}
+	if next.Port < 1 || next.Port > 65535 {
+		return fmt.Errorf("本机端口必须为 1–65535")
+	}
+	if _, err = normalizeControlPlaneURL(next.ControlPlaneURL); err != nil {
+		return err
+	}
+	st.mu.Lock()
+	st.cur = next
+	st.mu.Unlock()
+	return nil
+}
+
 func (st *settingsStore) save(next Settings) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if next.Port == 0 {
 		next.Port = 8088
+	}
+	normalized, err := normalizeControlPlaneURL(next.ControlPlaneURL)
+	if err != nil {
+		return err
+	}
+	next.ControlPlaneURL = normalized
+	if next.UpdateRepository != "" && !repositoryPattern.MatchString(next.UpdateRepository) {
+		return fmt.Errorf("update repository must be a GitHub owner/repository")
 	}
 	if err := os.MkdirAll(octopHome(), 0o755); err != nil {
 		return err
@@ -105,6 +153,21 @@ func (st *settingsStore) save(next Settings) error {
 	}
 	st.cur = next
 	return nil
+}
+
+func normalizeControlPlaneURL(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", fmt.Errorf("control plane URL must be an http(s) URL")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
 func greenPlat() string {

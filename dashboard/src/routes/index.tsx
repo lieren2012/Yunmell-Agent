@@ -34,6 +34,7 @@ const AgentConfigPage = lazy(() => import("../pages/Agent/Config"));
 // Misc
 const PwaDebugPage = lazy(() => import("../pages/PwaDebug"));
 const NotFoundPage = lazy(() => import("../components/NotFoundPage"));
+const EnterpriseRegisterPage = lazy(() => import("../pages/EnterpriseRegister"));
 
 function RedirectPreserveSearch({ to }: { to: string }) {
   const location = useLocation();
@@ -219,6 +220,7 @@ export const routeConfigs: RouteConfig[] = [
 
   // Admin (RequirePermission wrapper applied in MainLayout)
   { path: "/admin/users", element: <OctopAdminUsersPage /> },
+  { path: "/register", element: <EnterpriseRegisterPage /> },
   { path: "/admin/enterprise", element: <AdminEnterprisePage /> },
   {
     path: "/admin/sso",

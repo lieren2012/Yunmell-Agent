@@ -487,7 +487,10 @@ class OctopServer:
             repos=self.services.repos,
             timezone=config.default_timezone,
         )
-        await cron_mgr.boot()
+        from octop.infra.deployment.connection import control_plane_only, desktop_mode
+
+        if not control_plane_only() and not desktop_mode():
+            await cron_mgr.boot()
 
         from octop.infra.setup.tls.renewal import install_auto_renewal_job
 
@@ -519,12 +522,16 @@ class OctopServer:
         )
         registry.set_proactive_scheduler(proactive_scheduler)
 
-        await registry.boot()
+        if control_plane_only() or desktop_mode():
+            await registry.boot(start_existing=False)
+        else:
+            await registry.boot()
         await gateway.refresh_media_backends()
 
         user_mgr = UserManager(self.services)
         await user_mgr.boot()
-        await proactive_scheduler.start_all()
+        if not control_plane_only() and not desktop_mode():
+            await proactive_scheduler.start_all()
 
         from octop.infra.auth.tokens import sign_token
         from octop.infra.bridge.manager import BridgeManager, public_base_url_from_config
@@ -577,6 +584,10 @@ class OctopServer:
         asyncio.create_task(_resume_bridges(), name="bridge-auto-resume")
 
     def _emit_wizard_password(self, *, user_count: int) -> None:
+        from octop.infra.deployment.connection import desktop_mode
+
+        if desktop_mode():
+            return
         config = self.config
         if config is None:
             return

@@ -139,7 +139,9 @@ export default function TeamDrawer({
   }, [open]);
 
   const hasNoModels = !modelsLoading && models.length === 0;
-  const blocked = submitting || hasNoModels;
+  // Members may create teams without model-management permission; the
+  // backend resolves the enterprise default model when this is empty.
+  const blocked = submitting;
 
   const handleSubmit = async () => {
     const values = await form.validateFields();
@@ -208,14 +210,10 @@ export default function TeamDrawer({
     >
       {hasNoModels && (
         <Alert
-          type="warning"
+          type="info"
           showIcon
           message={t("experts.noModelsWarning")}
-          action={
-            <a href="/admin/models" style={{ whiteSpace: "nowrap" }}>
-              {t("experts.goToAdmin")}
-            </a>
-          }
+          description="创建后将自动继承企业默认模型。"
           style={{ marginBottom: 16 }}
         />
       )}

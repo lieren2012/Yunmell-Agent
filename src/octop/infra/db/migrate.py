@@ -1903,9 +1903,75 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
         with db.connect() as conn:
             conn.execute("UPDATE _schema_version SET version = ?", (version,))
         return
+    if version == 24:
+        _ensure_enterprise_registration_schema(db)
+        with db.connect() as conn:
+            conn.execute("UPDATE _schema_version SET version = ?", (version,))
+        return
+    if version == 25:
+        _ensure_enterprise_default_model_schema(db)
+        with db.connect() as conn:
+            conn.execute("UPDATE _schema_version SET version = ?", (version,))
+        return
+    if version == 26:
+        _ensure_registration_review_policy_schema(db)
+        with db.connect() as conn:
+            conn.execute("UPDATE _schema_version SET version = ?", (version,))
+        return
     sql = path.read_text(encoding="utf-8")
     with db.connect() as conn:
         conn.executescript(sql)
+
+
+def _ensure_enterprise_registration_schema(db: DatabasePool) -> None:
+    """Apply v24 SQLite DDL idempotently for partial or restored databases."""
+    _ensure_column(db, "organizations", "login_slug", "TEXT")
+    _ensure_column(db, "users", "approval_status", "TEXT NOT NULL DEFAULT 'approved'")
+    with db.connect() as conn:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_login_slug "
+            "ON organizations(login_slug)"
+        )
+        conn.execute(
+            "UPDATE organizations SET login_slug = lower(replace(name, ' ', '-')) || '-' || "
+            "substr(organization_id, 1, 8) WHERE login_slug IS NULL"
+        )
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS enterprise_registration_applications (
+              id              INTEGER PRIMARY KEY AUTOINCREMENT,
+              application_id  TEXT NOT NULL UNIQUE,
+              organization_id TEXT NOT NULL,
+              user_id         INTEGER NOT NULL UNIQUE,
+              status          TEXT NOT NULL DEFAULT 'pending',
+              submitted_at    INTEGER NOT NULL,
+              reviewed_at     INTEGER,
+              reviewed_by     INTEGER,
+              review_note     TEXT,
+              supplement      TEXT,
+              FOREIGN KEY (organization_id) REFERENCES organizations(organization_id) ON DELETE CASCADE,
+              FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+              FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_registration_org_status
+              ON enterprise_registration_applications(organization_id, status, submitted_at);
+            """
+        )
+
+
+def _ensure_enterprise_default_model_schema(db: DatabasePool) -> None:
+    """Apply v25 SQLite DDL idempotently for restores and partial upgrades."""
+    _ensure_column(db, "organizations", "default_provider_name", "TEXT")
+    _ensure_column(db, "organizations", "default_model", "TEXT")
+
+
+def _ensure_registration_review_policy_schema(db: DatabasePool) -> None:
+    _ensure_column(
+        db,
+        "organizations",
+        "registration_review_required",
+        "INTEGER NOT NULL DEFAULT 1",
+    )
 
 
 def run_migrations(db: DatabasePool) -> None:
@@ -1941,8 +2007,15 @@ def run_migrations(db: DatabasePool) -> None:
                 _ensure_published_experts_schema(db)
             if version == 10:
                 _ensure_knowledge_bases_schema(db)
+            if version == 27:
+                _ensure_single_deployment_schema(db)
         else:
-            _apply_sqlite_migration(db, version, path)
+            if version == 27:
+                _ensure_single_deployment_schema(db)
+                with db.connect() as conn:
+                    conn.execute("UPDATE _schema_version SET version = ?", (version,))
+            else:
+                _apply_sqlite_migration(db, version, path)
     _reconcile_pre_squash_schema_version(db)
     _ensure_knowledge_bases_schema(db)
     _ensure_skill_packages_schema(db)
@@ -1960,3 +2033,61 @@ def run_migrations(db: DatabasePool) -> None:
     _ensure_sso_provider_kind_schema(db)
     _ensure_user_role_schema(db)
     _ensure_bridge_connections_schema(db)
+    _ensure_single_deployment_schema(db)
+
+
+def _ensure_single_deployment_schema(db: DatabasePool) -> None:
+    """Apply the single-deployment bridge idempotently to restored databases."""
+    _ensure_column(db, "organizations", "registration_open", "INTEGER NOT NULL DEFAULT 1")
+    _ensure_column(db, "teams", "archived", "INTEGER NOT NULL DEFAULT 0")
+    ddl = """
+            CREATE TABLE IF NOT EXISTS deployment_registration_receipts (
+              digest TEXT PRIMARY KEY,
+              application_id TEXT NOT NULL REFERENCES enterprise_registration_applications(application_id),
+              expires_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS desktop_identities (
+              authority TEXT NOT NULL,
+              remote_user_id INTEGER NOT NULL,
+              local_user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY(authority, remote_user_id)
+            );
+            CREATE TABLE IF NOT EXISTS deployment_model_usage (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id INTEGER NOT NULL REFERENCES users(id),
+              model TEXT NOT NULL,
+              ts INTEGER NOT NULL,
+              input_tokens INTEGER NOT NULL,
+              output_tokens INTEGER NOT NULL
+            );
+            """
+    pg_ddl = """
+            CREATE TABLE IF NOT EXISTS deployment_registration_receipts (
+              digest TEXT PRIMARY KEY,
+              application_id TEXT NOT NULL REFERENCES enterprise_registration_applications(application_id),
+              expires_at BIGINT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS desktop_identities (
+              authority TEXT NOT NULL,
+              remote_user_id BIGINT NOT NULL,
+              local_user_id BIGINT NOT NULL UNIQUE REFERENCES users(id),
+              created_at BIGINT NOT NULL,
+              PRIMARY KEY(authority, remote_user_id)
+            );
+            CREATE TABLE IF NOT EXISTS deployment_model_usage (
+              id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+              user_id BIGINT NOT NULL REFERENCES users(id),
+              model TEXT NOT NULL,
+              ts BIGINT NOT NULL,
+              input_tokens BIGINT NOT NULL,
+              output_tokens BIGINT NOT NULL
+            );
+            """
+    with db.connect() as conn:
+        if db.dialect == "postgresql":
+            for statement in pg_ddl.split(";"):
+                if statement.strip():
+                    conn.execute(statement)
+        else:
+            conn.executescript(ddl)

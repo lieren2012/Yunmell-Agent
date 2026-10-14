@@ -64,6 +64,7 @@ jobs:
 
   publish:
     name: Publish to PyPI
+    if: github.repository == 'TencentCloud/Octop'
     needs: build
     runs-on: ubuntu-latest
     environment: pypi
@@ -81,7 +82,14 @@ jobs:
 
   github-release:
     name: Create GitHub Release
-    needs: publish
+    # Yunmell keeps its packages private to GitHub Releases and does not
+    # publish to PyPI.  Depend on the build artifact directly so the release
+    # job still runs when the TencentCloud-only PyPI job is skipped.
+    needs: build
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') &&
+      (github.repository == 'TencentCloud/Octop' ||
+       github.repository == 'lieren2012/Yunmell-Agent')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -132,6 +140,7 @@ jobs:
           body_path: .release-notes.md
           files: dist/*
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
 
   # workflow_run / release:published are unreliable when Release itself was
   # started via GITHUB_TOKEN workflow_dispatch (Auto Tag). Explicitly cascade.
@@ -142,6 +151,7 @@ jobs:
   sync-develop:
     name: Trigger sync main into develop
     needs: github-release
+    if: github.repository == 'TencentCloud/Octop'
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch Sync Main Into Develop
@@ -158,6 +168,7 @@ jobs:
   trigger-fnos:
     name: Trigger FnOS FPK build
     needs: github-release
+    if: github.repository == 'TencentCloud/Octop'
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch Build Octop FPK

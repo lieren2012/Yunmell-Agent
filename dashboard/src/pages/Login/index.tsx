@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Input, Button, Checkbox } from "antd";
+import { Alert, Input, Button, Checkbox, Typography } from "antd";
+import { deploymentApi, enrollmentError, type DeploymentInfo, type RegistrationStatus } from "../../api/modules/deployment";
 import { message } from "@/utils/antdMessage";
 
 import { KeyRound, Lock, User } from "lucide-react";
@@ -18,7 +19,6 @@ import {
 import { apiErrorMessage } from "../../utils/apiError";
 import { refreshServerLabels } from "../../i18n";
 import { applyUserLocale, applyGuestLocale } from "../../utils/locale";
-import { useTheme } from "../../context/ThemeContext";
 import {
   isSsoPopup,
   isSsoPopupMessage,
@@ -74,9 +74,15 @@ function providerIcon(provider: OauthProviderStatus): ReactNode {
 
 export default function LoginPage() {
   const { t } = useTranslation();
-  const { isDark } = useTheme();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const [enterprise, setEnterprise] = useState<DeploymentInfo | null>(null);
+  const [serviceAddress, setServiceAddress] = useState("");
+  const [serviceError, setServiceError] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const loginInFlight = useRef(false);
+  const [registration, setRegistration] = useState<RegistrationStatus>({ status: "none" });
+  const [managementOnly, setManagementOnly] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
@@ -94,6 +100,13 @@ export default function LoginPage() {
 
   useEffect(() => {
     void applyGuestLocale();
+    void deploymentApi.connection().then(async connection => {
+      setManagementOnly(!!connection.management_only);
+      if (connection.desktop && !connection.address) { navigate("/connection", { replace: true }); return; }
+      setServiceAddress(connection.address || window.location.origin);
+      const [info, status] = await Promise.all([deploymentApi.info(), deploymentApi.status()]);
+      setEnterprise(info); setRegistration(status);
+    }).catch(error => setServiceError(enrollmentError(error)));
   }, []);
 
   useEffect(() => {
@@ -102,6 +115,9 @@ export default function LoginPage() {
       .getAuthStatus()
       .then((status) => {
         if (cancelled) return;
+        if (status.connection_required) {
+          clearAuthToken(); navigate("/connection", { replace: true }); return;
+        }
         if (status.setup_required) {
           clearAuthToken();
           navigate("/setup", { replace: true });
@@ -218,19 +234,22 @@ export default function LoginPage() {
   };
 
   const handleLogin = async () => {
-    if (!username || !password || !captchaReady) return;
+    if (loginInFlight.current || !username.trim() || !password || !captchaReady) return;
+    loginInFlight.current = true;
+    setLoginError("");
     setLoading(true);
     try {
       const token = await captchaRef.current?.getToken();
-      const res = await authApi.login(username, password, token);
+      const res = await authApi.login(username.trim(), password, token);
       setAuthToken(res.access_token, remember);
       await applyUserLocale(res.user.locale);
       void refreshServerLabels(res.user.locale);
-      navigate("/chat", { replace: true });
+      navigate(managementOnly && (res.user.role === "admin" || res.user.permissions?.includes("users")) ? "/admin/enterprise" : "/chat", { replace: true });
     } catch (err) {
-      message.error(apiErrorMessage(err, t("login.failed"), t));
+      setLoginError(enrollmentError(err));
       resetCaptcha();
     } finally {
+      loginInFlight.current = false;
       setLoading(false);
     }
   };
@@ -270,10 +289,8 @@ export default function LoginPage() {
         }}
       >
         <img
-          src={
-            isDark ? "/logo_horizontal_white.svg" : "/logo_horizontal_dark.svg"
-          }
-          alt="Octop"
+          src="/yunmell-icon.png"
+          alt="云迈智能体"
           style={{
             height: 48,
             width: "auto",
@@ -292,8 +309,15 @@ export default function LoginPage() {
             textAlign: "center",
           }}
         >
-          {t("login.title")}
+          {enterprise ? enterprise.name : t("login.title")}
         </h2>
+
+        {serviceAddress && <Typography.Text type="secondary">服务地址：{serviceAddress}</Typography.Text>}
+        {loginError && <Alert type="error" message={loginError} showIcon role="alert" />}
+        {serviceError && <Alert type="error" message={serviceError} showIcon role="alert" />}
+        {registration.status === "pending" && <Alert type="info" message="注册申请正在等待管理员审核。" showIcon />}
+        {registration.status === "approved" && <Alert type="success" message="注册已通过，可以登录。" showIcon />}
+        {(registration.status === "rejected" || registration.status === "needs_info") && <Alert type="warning" message={registration.status === "rejected" ? "注册申请已被驳回，请联系管理员。" : "注册申请需要补充资料，请联系管理员。"} showIcon />}
 
         <div style={{ width: "100%" }}>
           <Input
@@ -424,6 +448,15 @@ export default function LoginPage() {
             open={showForgotHelp}
             onClose={() => setShowForgotHelp(false)}
           />
+          <Button
+            type="link"
+            block
+            onClick={() => navigate("/register")}
+            style={{ padding: 0, height: 32, color: "var(--fn-text-secondary)" }}
+          >
+            企业用户注册
+          </Button>
+          <Button type="link" block onClick={() => navigate("/connection", { replace: true })}>更换服务地址</Button>
         </div>
 
         {providers.length > 0 && (

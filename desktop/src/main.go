@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,14 +27,20 @@ const trayDoubleClick = 400 * time.Millisecond
 
 // App is the Wails service bound to the shell UI.
 type App struct {
-	app            *application.App
-	window         *application.WebviewWindow
-	settingsWindow *application.WebviewWindow
-	store          *settingsStore
-	sleep          *sleepGuard
-	cmd            *exec.Cmd
-	mu             sync.Mutex
-	quitting       bool
+	app              *application.App
+	window           *application.WebviewWindow
+	settingsWindow   *application.WebviewWindow
+	connectionWindow *application.WebviewWindow
+	updateWindow     *application.WebviewWindow
+	updater          *clientUpdater
+	bootMu           sync.Mutex
+	startupMu        sync.Mutex
+	startup          StartupStatus
+	store            *settingsStore
+	sleep            *sleepGuard
+	cmd              *exec.Cmd
+	mu               sync.Mutex
+	quitting         bool
 
 	trayClickMu    sync.Mutex
 	lastTrayClick  time.Time
@@ -52,6 +62,7 @@ func (a *App) ServiceShutdown() error {
 }
 
 func (a *App) GetSettings() Settings {
+	_ = a.store.reload()
 	return a.store.get()
 }
 
@@ -102,6 +113,9 @@ func (a *App) ShowMain() {
 }
 
 func (a *App) HideSettings() {
+	if a.connectionWindow != nil {
+		a.connectionWindow.Hide()
+	}
 	if a.settingsWindow == nil {
 		return
 	}
@@ -109,6 +123,32 @@ func (a *App) HideSettings() {
 }
 
 func (a *App) Quit() {
+	a.requestQuit()
+}
+
+type mainWindowCloseBehavior uint8
+
+const (
+	mainWindowCloseToTray mainWindowCloseBehavior = iota
+	mainWindowQuitApplication
+)
+
+func mainWindowCloseBehaviorFor(s Settings) mainWindowCloseBehavior {
+	if s.MinimizeToTray {
+		return mainWindowCloseToTray
+	}
+	return mainWindowQuitApplication
+}
+
+// closeMainWindow applies the user's close policy. Window minimisation is
+// deliberately not handled here: it must remain a native minimise so the
+// window keeps its taskbar button. The flag name is kept for settings-file
+// compatibility, but it now means "hide on close".
+func (a *App) closeMainWindow() {
+	if a.store != nil && mainWindowCloseBehaviorFor(a.store.get()) == mainWindowCloseToTray {
+		a.hideToTray()
+		return
+	}
 	a.requestQuit()
 }
 
@@ -150,6 +190,7 @@ func jsonString(s string) string {
 }
 
 func (a *App) setStatus(msg string) {
+	a.updateStartup(func(s *StartupStatus) { s.Message = msg })
 	if a.app == nil {
 		return
 	}
@@ -157,23 +198,74 @@ func (a *App) setStatus(msg string) {
 }
 
 func (a *App) boot() {
+	if !a.bootMu.TryLock() {
+		return
+	}
+	defer a.bootMu.Unlock()
+	a.updateStartup(func(s *StartupStatus) { *s = StartupStatus{Busy: true, Phase: "control-plane"} })
+	defer a.updateStartup(func(s *StartupStatus) { s.Busy = false })
 	locale := LocaleEN
 	if a.store != nil {
 		locale = a.store.get().Locale
 	}
-	if url := os.Getenv("OCTOP_DESKTOP_URL"); url != "" {
-		a.setStatus(desktopText(locale, copyStatusConnecting))
-		if err := waitHealth(locale, url, 60*time.Second); err != nil {
-			a.setStatus(err.Error())
+	// OCTOP_DESKTOP_URL is retained for the development shell, where Wails is
+	// intentionally pointed at an already-running Octop instance. A packaged
+	// desktop release uses ControlPlaneURL only as the management-service
+	// connection; the message/runtime dashboard remains local.
+	if devURL := strings.TrimSpace(os.Getenv("OCTOP_DESKTOP_URL")); devURL != "" {
+		parsed, err := url.Parse(devURL)
+		if err != nil || (parsed.Hostname() != "localhost" && (net.ParseIP(parsed.Hostname()) == nil || !net.ParseIP(parsed.Hostname()).IsLoopback())) {
+			a.startupFailed("OCTOP_DESKTOP_URL 仅可指向本机开发工作台。企业管理地址请填写在控制面设置中。")
 			return
 		}
-		a.showDashboard(url)
+		a.setStatus(desktopText(locale, copyStatusConnecting))
+		if err := waitHealth(locale, devURL, 60*time.Second); err != nil {
+			a.startupFailed(err.Error())
+			return
+		}
+		a.showDashboard(devURL)
 		return
 	}
 	s := a.store.get()
+	if controlPlaneURL := strings.TrimSpace(s.ControlPlaneURL); controlPlaneURL != "" {
+		// The management service carries identity and policy only.  Probe it in
+		// the background so a slow/offline control plane never prevents the
+		// local runtime and its pages from starting.
+		go func(address string, lang Locale) {
+			health, err := waitStartupHealth(lang, address, "control-plane", 8*time.Second)
+			a.updateStartup(func(state *StartupStatus) {
+				state.ControlPlane = health
+				if err != nil && state.Phase == "ready" {
+					state.Message = "企业管理端暂时离线，本地运行时仍可用"
+				}
+			})
+		}(controlPlaneURL, locale)
+	}
+	a.updateStartup(func(state *StartupStatus) { state.Phase = "local-runtime" })
+	base := dashboardURL(s.Port)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	existing := probeStartupHealth(ctx, base, "local-runtime")
+	cancel()
+	a.updateStartup(func(state *StartupStatus) { state.LocalRuntime = existing })
+	if existing.Ready {
+		a.mu.Lock()
+		owned := a.cmd != nil
+		a.mu.Unlock()
+		if !owned {
+			a.startupFailed(fmt.Sprintf("企业管理端检查通过；本机端口 %d 已有旧版或独立运行时。请关闭旧云迈客户端后重试，不要删除数据目录。", s.Port))
+			return
+		}
+		a.updateStartup(func(state *StartupStatus) { state.LocalRuntime = existing; state.Phase = "ready" })
+		a.showDashboard(base)
+		return
+	}
+	if existing.HTTPStatus != 0 {
+		a.startupFailed(fmt.Sprintf("本机端口 %d 已有服务，但健康响应不符合云迈运行时协议：%s。请检查端口占用。", s.Port, existing.Detail))
+		return
+	}
 	a.setStatus(desktopText(locale, copyStatusCheckingRuntime))
 	if err := ensurePortable(locale, a.setStatus); err != nil {
-		a.setStatus(err.Error())
+		a.startupFailed(err.Error())
 		return
 	}
 	root := portableDir()
@@ -183,15 +275,17 @@ func (a *App) boot() {
 	a.cmd = cmd
 	a.mu.Unlock()
 	if err != nil {
-		a.setStatus(err.Error())
+		a.startupFailed(err.Error())
 		return
 	}
-	base := dashboardURL(s.Port)
 	a.setStatus(desktopText(locale, copyStatusStartingService))
-	if err := waitHealth(locale, base, 2*time.Minute); err != nil {
-		a.setStatus(err.Error())
+	health, err := waitStartupHealth(locale, base, "local-runtime", 45*time.Second)
+	a.updateStartup(func(state *StartupStatus) { state.LocalRuntime = health })
+	if err != nil {
+		a.startupFailed(err.Error())
 		return
 	}
+	a.updateStartup(func(state *StartupStatus) { state.Phase = "ready" })
 	a.showDashboard(base)
 }
 
@@ -287,6 +381,13 @@ func (a *App) requestQuit() {
 }
 
 func main() {
+	if handleStartupDiagnosis() {
+		return
+	}
+	if handleClientUpdateCommand() {
+		return
+	}
+	updatesOnly := len(os.Args) == 2 && os.Args[1] == "--client-updates"
 	store := &settingsStore{cur: loadSettings()}
 	api := &App{
 		store: store,
@@ -294,8 +395,8 @@ func main() {
 	}
 
 	app := application.New(application.Options{
-		Name:        "Yunmell-Agent",
-		Description: "Yunmell-Agent desktop",
+		Name:        "云迈智能体",
+		Description: "云迈智能体桌面客户端",
 		Services: []application.Service{
 			application.NewService(api),
 		},
@@ -313,6 +414,11 @@ func main() {
 		},
 	})
 	api.app = app
+	repository := store.get().UpdateRepository
+	if value := strings.TrimSpace(os.Getenv("YUNMELL_UPDATE_REPO")); value != "" {
+		repository = value
+	}
+	api.updater = newClientUpdater(repository, greenPlat(), filepath.Join(octopHome(), "updates"), func(status ClientUpdateStatus) { app.Event.Emit("desktop:client-update", status) })
 	attachOpenURLEventListener(app, api.OpenExternal)
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
 		applyAppIcon(app)
@@ -323,6 +429,7 @@ func main() {
 		Width:                1200,
 		Height:               800,
 		URL:                  "/",
+		Hidden:               updatesOnly,
 		Frameless:            true,
 		AllowSimpleEventEmit: true,
 		BackgroundColour:     application.NewRGB(247, 248, 250),
@@ -335,7 +442,7 @@ func main() {
 		win.Minimise()
 	})
 	app.Event.On("desktop:close", func(_ *application.CustomEvent) {
-		api.hideToTray()
+		api.closeMainWindow()
 	})
 	installDragOverlay := func(_ *application.WindowEvent) { api.scheduleDragOverlay() }
 	win.OnWindowEvent(events.Mac.WebViewDidFinishNavigation, installDragOverlay)
@@ -356,6 +463,13 @@ func main() {
 		},
 	})
 	api.settingsWindow = settingsWin
+	updatesWin := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title: "云迈客户端更新", Width: 560, Height: 620,
+		URL: "/updates.html", Hidden: true, BackgroundColour: application.NewRGB(255, 255, 255),
+	})
+	api.updateWindow = updatesWin
+	updatesWin.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) { event.Cancel(); updatesWin.Hide() })
+	app.Event.On("desktop:show-updates", func(_ *application.CustomEvent) { api.ShowClientUpdates() })
 	app.Event.RegisterApplicationEventHook(events.Mac.ApplicationShouldHandleReopen, func(event *application.ApplicationEvent) {
 		event.Cancel()
 		restoreMainAfterDockClick(api.window, api.settingsWindow)
@@ -368,13 +482,22 @@ func main() {
 		if quit {
 			return
 		}
-		e.Cancel()
-		api.hideToTray()
-	})
-	win.OnWindowEvent(events.Common.WindowMinimise, func(_ *application.WindowEvent) {
-		if api.store.get().MinimizeToTray {
+		if api.store != nil && mainWindowCloseBehaviorFor(api.store.get()) == mainWindowCloseToTray {
+			e.Cancel()
 			api.hideToTray()
+			return
 		}
+		// The close event is already on the native UI thread. Let the native
+		// close continue and request application shutdown asynchronously; this
+		// avoids re-entering Wails' window-close hook synchronously.
+		api.mu.Lock()
+		api.quitting = true
+		api.mu.Unlock()
+		go func() {
+			if api.app != nil {
+				api.app.Quit()
+			}
+		}()
 	})
 	settingsWin.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		e.Cancel()
@@ -389,22 +512,47 @@ func main() {
 	tray.SetTooltip("云迈智能体")
 	tray.AttachWindow(settingsWin).WindowOffset(6)
 	showSettings := func() { tray.ShowWindow() }
+	trayMenu := app.NewMenu()
+	trayMenu.Add("显示云迈智能体").OnClick(func(_ *application.Context) { api.showWindow() })
+	trayMenu.Add("设置").OnClick(func(_ *application.Context) { showSettings() })
+	// Client updates are a desktop-local operation.  Keep this action outside
+	// the dashboard's admin-only /api/update permission gate so regular users
+	// can check, download, and install the Yunmell client from the tray.
+	trayMenu.Add("检查客户端更新").OnClick(func(_ *application.Context) { api.ShowClientUpdates() })
+	trayMenu.AddSeparator()
+	trayMenu.Add("退出").OnClick(func(_ *application.Context) { api.requestQuit() })
+	tray.SetMenu(trayMenu)
 	if trayLeftClickShowsSettings(runtime.GOOS) {
 		tray.OnClick(showSettings)
 	} else {
 		tray.OnClick(func() { api.onTrayLeftClick() })
 	}
-	tray.OnRightClick(showSettings)
+	// On Windows/Linux the context menu contains explicit Show/Quit actions;
+	// keep the left click focused on restoring the main window.
+	tray.OnRightClick(tray.OpenMenu)
 
-	if _, err := api.setAutostart(store.get().Autostart); err != nil {
-		log.Printf("sync autostart: %v", err)
-	}
-	if err := api.sleep.set(store.get().PreventSleep); err != nil {
-		log.Printf("enable sleep prevention: %v", err)
+	if !updatesOnly {
+		if _, err := api.setAutostart(store.get().Autostart); err != nil {
+			log.Printf("sync autostart: %v", err)
+		}
+		if err := api.sleep.set(store.get().PreventSleep); err != nil {
+			log.Printf("enable sleep prevention: %v", err)
+		}
 	}
 
 	api.scheduleDragOverlay()
-	go api.boot()
+	if !updatesOnly {
+		go api.boot()
+	}
+	go func() {
+		time.Sleep(time.Second)
+		if updatesOnly {
+			api.ShowClientUpdates()
+		}
+		if err := api.updater.check(store.get().IncludePrerelease); err == nil && api.updater.snapshot().HasUpdate {
+			api.ShowClientUpdates()
+		}
+	}()
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

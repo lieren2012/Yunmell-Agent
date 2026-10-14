@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from octop.infra.agents.providers.model_flags import is_embedding_model
+from octop.infra.agents.providers.onnx_catalog import ONNX_PRESET_MODEL_IDS
 from octop.infra.agents.providers.onnx_service import (
     embedding_prerequisites_ok_for_model,
     is_model_downloaded,
@@ -19,6 +20,11 @@ _FEATURE_ENABLED_KEY = "knowledge_bases_enabled"
 _EMBEDDING_BACKEND_KEY = "knowledge_embedding_backend"
 _EMBEDDING_MODEL_KEY = "knowledge_embedding_model"
 _EMBEDDING_PROVIDER_ID_KEY = "knowledge_embedding_provider_id"
+# Personal libraries are an edge-local feature.  Their model selection is
+# deliberately kept out of the enterprise embedding settings above: the
+# control plane may select a remote/shared embedding backend while a desktop
+# user still indexes private documents with a local ONNX model.
+_PERSONAL_EMBEDDING_MODEL_KEY = "knowledge_personal_embedding_model"
 
 SettingsGet = Callable[[str], str | None]
 SettingsSet = Callable[[str, str], None]
@@ -70,10 +76,14 @@ def get_capability(settings_get: SettingsGet, provider_repo: Any = None) -> dict
     deps_available = local_embedding_deps_available()
     model_downloaded = bool(selected_model and is_model_downloaded(selected_model))
     provider_ready = _remote_ready(provider, selected_model)
+    # A missing model is a complete, local configuration state.  Do not load
+    # optional embedding runtimes just to report that no model was selected;
+    # the capability endpoint must remain fast and deterministic on a fresh
+    # install.
     prerequisites_ok = (
         provider_ready
         if backend == "remote"
-        else embedding_prerequisites_ok_for_model(selected_model)
+        else bool(selected_model) and embedding_prerequisites_ok_for_model(selected_model)
     )
     feature_enabled = _as_bool(settings_get(_FEATURE_ENABLED_KEY))
     return {
@@ -91,6 +101,63 @@ def get_capability(settings_get: SettingsGet, provider_repo: Any = None) -> dict
         },
         **get_advanced_settings(settings_get),
     }
+
+
+def personal_embedding_model(settings_get: SettingsGet) -> str:
+    """Return the edge-local model selected for personal libraries.
+
+    The first recommended catalog model is intentionally used when no local
+    preference has been saved yet.  This gives a fresh desktop a deterministic
+    download target without copying the enterprise (possibly remote) model
+    settings into the user's private data path.
+    """
+    selected = (settings_get(_PERSONAL_EMBEDDING_MODEL_KEY) or "").strip()
+    return selected or str(ONNX_PRESET_MODEL_IDS[0])
+
+
+def set_personal_embedding_model(
+    settings_set: SettingsSet, model: str, *, allow_all: bool = False
+) -> str:
+    """Persist a catalog-safe local model selection for personal libraries."""
+    selected = str(model or "").strip()
+    if not allow_all and selected not in {str(item) for item in ONNX_PRESET_MODEL_IDS}:
+        raise ValueError("personal libraries may use recommended local ONNX models only")
+    settings_set(_PERSONAL_EMBEDDING_MODEL_KEY, selected)
+    return selected
+
+
+def get_personal_capability(settings_get: SettingsGet) -> dict[str, Any]:
+    """Return local ONNX readiness for the personal knowledge-base scope."""
+    model = personal_embedding_model(settings_get)
+    deps_available = local_embedding_deps_available()
+    model_downloaded = bool(model and is_model_downloaded(model))
+    prerequisites_ok = bool(model and deps_available and model_downloaded)
+    return {
+        "scope": "personal",
+        "feature_enabled": True,
+        "backend": "onnx",
+        "selected_model": model,
+        "provider_id": "",
+        "prerequisites_ok": prerequisites_ok,
+        "usable": prerequisites_ok,
+        "checks": {
+            "model_selected": bool(model),
+            "model_downloaded": model_downloaded,
+            "deps_available": deps_available,
+            "provider_ready": False,
+        },
+        "download_required": not model_downloaded,
+    }
+
+
+def assert_personal_knowledge_usable(settings_get: SettingsGet) -> str:
+    """Return the local model or raise a local, actionable prerequisite error."""
+    capability = get_personal_capability(settings_get)
+    if not capability["checks"]["deps_available"]:
+        raise RuntimeError("personal local embedding components are not installed")
+    if not capability["checks"]["model_downloaded"]:
+        raise RuntimeError("personal ONNX embedding model is not downloaded yet")
+    return str(capability["selected_model"])
 
 
 def set_feature_enabled(

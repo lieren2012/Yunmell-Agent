@@ -259,11 +259,40 @@ export default function AgentExpertsTable({
   );
 
   const handleOpenChat = useCallback(
-    (agentId: string) => {
-      setActiveAgent(agentId);
-      navigate(`/chat/${agentId}`);
+    (agent: OctopAgent) => {
+      if (agent.bridge) {
+        setActiveAgent(agent.agent_id);
+        navigate(`/chat/${agent.agent_id}`);
+        return;
+      }
+      void request<{
+        state: string;
+        running?: boolean;
+        last_error: string | null;
+      }>(`/agents/${agent.agent_id}`)
+        .then((latest) => {
+          setLocalStates((prev) => ({
+            ...prev,
+            [agent.agent_id]: latest.state,
+          }));
+          onStateChange(agent.agent_id, latest.state);
+          if (!isAgentChatReady(latest.state, latest)) {
+            message.error(
+              formatAgentError(latest.last_error, t) ||
+                t("chat.agentNotRunningHint"),
+            );
+            void refreshAgents({ silent: true, force: true });
+            return;
+          }
+          setActiveAgent(agent.agent_id);
+          navigate(`/chat/${agent.agent_id}`);
+        })
+        .catch(() => {
+          setActiveAgent(agent.agent_id);
+          navigate(`/chat/${agent.agent_id}`);
+        });
     },
-    [setActiveAgent, navigate],
+    [navigate, onStateChange, refreshAgents, setActiveAgent, t],
   );
 
   const copyAgentId = useCallback(
@@ -522,7 +551,7 @@ export default function AgentExpertsTable({
               <button
                 type="button"
                 className={styles.tableChatBtn}
-                onClick={() => handleOpenChat(row.agent_id)}
+                onClick={() => handleOpenChat(row)}
               >
                 <MessageSquare size={13} />
                 {t("experts.openChat", "对话")}

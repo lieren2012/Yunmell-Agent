@@ -22,4 +22,11 @@ describe("isNetworkFetchError", () => {
       isNetworkFetchError(new Error("Request failed with status 503")),
     ).toBe(false);
   });
+
+  it("detects bounded request timeouts as offline", () => {
+    vi.stubGlobal("navigator", { onLine: true });
+    const error = new Error("Request timed out after 15000ms");
+    error.name = "TimeoutError";
+    expect(isNetworkFetchError(error)).toBe(true);
+  });
 });

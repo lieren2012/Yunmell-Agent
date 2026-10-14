@@ -135,9 +135,14 @@ async def _resolve_validated_ip(url: str) -> str:
         raise UnsafeOutboundUrl(f"cannot resolve hostname {host!r}") from exc
     if not infos:
         raise UnsafeOutboundUrl(f"cannot resolve hostname {host!r}")
+    resolved_ips: list[str] = []
     for info in infos:
-        _check_resolved_ip(info[4][0])
-    return infos[0][4][0]
+        address = info[4][0]
+        if not isinstance(address, str):
+            raise UnsafeOutboundUrl("DNS returned an invalid address")
+        _check_resolved_ip(address)
+        resolved_ips.append(address)
+    return resolved_ips[0]
 
 
 class _PinnedNetworkBackend(AutoBackend):

@@ -149,26 +149,37 @@ async def test_enabling_reindexes_documents_when_model_changes(
 
 
 @pytest.mark.asyncio
-async def test_create_base_maps_disabled_feature_error(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_create_base_allows_personal_metadata_before_feature_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from octop.api.routers import knowledge_bases
 
     server = SimpleNamespace(services=_services())
     user = SimpleNamespace(id=1, is_admin=False)
 
-    def fail(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("knowledge feature is disabled")
+    monkeypatch.setattr(
+        knowledge_bases,
+        "_knowledge_service",
+        lambda _server: SimpleNamespace(create_base=lambda **_kwargs: _Base()),
+    )
+    # Personal metadata remains available while the administrator configures
+    # the embedding runtime; indexing still enforces the capability gate.
+    monkeypatch.setattr(
+        knowledge_bases,
+        "assert_knowledge_usable",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("knowledge feature is disabled")
+        ),
+    )
 
-    monkeypatch.setattr(knowledge_bases, "assert_knowledge_usable", fail)
+    response = await knowledge_bases.create_base(
+        knowledge_bases.CreateBaseBody(name="Docs"),
+        request=_request(),
+        server=server,
+        user=user,
+    )
 
-    with pytest.raises(OctopError) as raised:
-        await knowledge_bases.create_base(
-            knowledge_bases.CreateBaseBody(name="Docs"),
-            request=_request(),
-            server=server,
-            user=user,
-        )
-
-    assert raised.value.code == ErrorCode.KNOWLEDGE_FEATURE_DISABLED
+    assert response["id"] == "kb-1"
 
 
 @pytest.mark.asyncio
@@ -564,6 +575,30 @@ async def test_onnx_activate_enables_downloaded_service(
 
     assert saved == {"enabled": True, "model": "BAAI/bge-small-zh-v1.5"}
     assert response["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_personal_ocr_install_is_on_demand(monkeypatch: pytest.MonkeyPatch) -> None:
+    from octop.api.routers import knowledge_bases
+
+    async def install(*, backend: str) -> str:
+        assert backend == "onnx"
+        return "installed"
+
+    monkeypatch.setattr(knowledge_bases, "ensure_ocr_deps_async", install)
+    monkeypatch.setattr(knowledge_bases, "local_ocr_deps_available", lambda: True)
+
+    response = await knowledge_bases.install_personal_ocr(
+        request=_request(),
+        _=object(),
+    )
+
+    assert response == {
+        "status": "installed",
+        "ready": True,
+        "backend": "onnx",
+        "model": "rapidocr",
+    }
 
 
 @pytest.mark.asyncio

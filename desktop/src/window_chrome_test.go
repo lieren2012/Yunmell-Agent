@@ -55,6 +55,35 @@ func TestSplashHTMLHasFramelessWindowControls(t *testing.T) {
 	}
 }
 
+func TestMainWindowMinimiseRemainsNativeAndTrayHasShowQuitActions(t *testing.T) {
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	if strings.Contains(body, "OnWindowEvent(events.Common.WindowMinimise") {
+		t.Fatal("native minimise must not be converted into Hide; taskbar button must remain")
+	}
+	for _, needle := range []string{
+		`trayMenu.Add("显示云迈智能体")`,
+		`trayMenu.Add("检查客户端更新")`,
+		`trayMenu.Add("退出")`,
+		`tray.OnRightClick(tray.OpenMenu)`,
+	} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("tray wiring missing %q", needle)
+		}
+	}
+	clientUpdate, err := os.ReadFile("client_update.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(clientUpdate), `state.Stage == "idle" || state.Stage == "error"`) ||
+		!strings.Contains(string(clientUpdate), `go func() { _ = a.updater.check(includePrerelease) }()`) {
+		t.Fatal("opening the desktop update surface must retry the local updater without server permissions")
+	}
+}
+
 func TestSplashLoadingCardWrapsProgressAndStatus(t *testing.T) {
 	html, err := os.ReadFile("assets/index.html")
 	if err != nil {
@@ -146,13 +175,22 @@ func TestSettingsHTMLFitsWithoutScrollbar(t *testing.T) {
 	if !strings.Contains(body, `"HideSettings"`) {
 		t.Fatal("settings close must hide the settings window, not the main window")
 	}
+	if !strings.Contains(body, "关闭窗口时隐藏到托盘") || !strings.Contains(body, "点击右上角关闭时隐藏窗口") {
+		t.Fatal("tray setting must describe close-to-tray behavior")
+	}
+	if strings.Contains(body, "点击最小化时隐藏窗口并保留在系统托盘") {
+		t.Fatal("tray setting must not claim that native minimise hides the window")
+	}
+	if !strings.Contains(body, `id="client-updates"`) || !strings.Contains(body, `检查客户端更新`) {
+		t.Fatal("desktop settings must expose a client-local update action")
+	}
 }
 
 func TestSettingsWindowSizeFitsContent(t *testing.T) {
 	if settingsWindowWidth != 400 {
 		t.Fatalf("settings width is %d, expected 400", settingsWindowWidth)
 	}
-	if settingsWindowHeight >= 500 {
+	if settingsWindowHeight >= 560 {
 		t.Fatalf("settings height %d leaves empty space under the form", settingsWindowHeight)
 	}
 	if settingsWindowHeight < 456 {

@@ -136,6 +136,9 @@ def build_app(server: OctopServer) -> FastAPI:
     install_bridge_proxy(app, server)
     install_jwt_auth(app, server)
     install_setup_lockdown(app, server)
+    from octop.api.middleware.deployment_desktop import install as install_desktop_deployment
+
+    install_desktop_deployment(app, server)
 
     if server.app_runtime is not None and server.app_runtime.bridge_manager is not None:
         from octop.api.bridge_peer import prepare_peer_dashboard_turn
@@ -210,6 +213,11 @@ def build_app(server: OctopServer) -> FastAPI:
         voice,
         workspace,
     )
+    from octop.api.routers.deployment import admin_router as deployment_admin_router
+    from octop.api.routers.deployment import enterprise_router as deployment_enterprise_router
+    from octop.api.routers.deployment import router as deployment_router
+    from octop.api.routers.deployment_model import desktop_router as desktop_model_router
+    from octop.api.routers.deployment_model import router as deployment_model_router
     from octop.api.routers.filesystem import router as filesystem_router
     from octop.api.routers.observability import router as observability_router
     from octop.api.routers.providers import admin_router as admin_providers_router
@@ -224,6 +232,11 @@ def build_app(server: OctopServer) -> FastAPI:
         [
             _RouterMount(setup.router, "/api", ["setup"]),
             _RouterMount(auth.router, "/api/auth", ["auth"]),
+            _RouterMount(deployment_router, "/api/auth", ["auth"]),
+            _RouterMount(deployment_model_router, "/api/auth", ["auth"]),
+            _RouterMount(desktop_model_router, "/api/desktop-model", ["auth"]),
+            _RouterMount(deployment_admin_router, "/api/admin/enterprise", ["admin"]),
+            _RouterMount(deployment_enterprise_router, "/api/enterprise", ["knowledge"]),
             _RouterMount(auth_oidc.router, "/api/auth", ["auth"]),
             _RouterMount(auth_oauth.router, "/api/auth", ["auth"]),
             _RouterMount(auth_ldap.router, "/api/auth", ["auth"]),

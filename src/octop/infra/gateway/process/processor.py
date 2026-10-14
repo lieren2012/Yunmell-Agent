@@ -548,6 +548,16 @@ class GlobalProcessor:
                     row,
                     self._agent_manager.get_config(agent_id),
                 )
+        if not model_ref and self._enterprise_repo is not None and user_id:
+            enterprise_default = self._enterprise_repo.default_model_for_user(user_id)
+            if enterprise_default:
+                if not providers.is_model_ref_usable(enterprise_default):
+                    raise OctopError(
+                        ErrorCode.FORBIDDEN,
+                        "enterprise default model is unavailable",
+                        status=503,
+                    )
+                model_ref = enterprise_default
         if not model_ref:
             user_row = self._user_repo.get(user_id)
             preferred = get_preferred_model_from_json(

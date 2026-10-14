@@ -84,6 +84,7 @@ class ProviderTestBody(BaseModel):
 class ProviderTestDraftBody(BaseModel):
     name: str
     kind: str
+    provider_id: int | None = None
     api_key: str | None = None
     base_url: str | None = None
     model_id: str
@@ -93,6 +94,7 @@ class ProviderTestDraftBody(BaseModel):
 
 class ProviderFetchModelsBody(BaseModel):
     kind: str
+    provider_id: int | None = None
     api_key: str | None = None
     base_url: str | None = None
     extra_json: str | None = None
@@ -131,7 +133,8 @@ def _row_to_dict(r: Any) -> dict[str, Any]:
         "name": r.name,
         "kind": r.kind,
         "base_url": r.base_url,
-        "api_key": r.api_key,
+        "api_key": None,
+        "api_key_configured": bool(r.api_key),
         "models": models,
         "note": r.note,
         "enabled": bool(r.enabled),
@@ -301,10 +304,14 @@ async def admin_delete_provider(
 async def admin_test_provider_draft(
     body: ProviderTestDraftBody,
     request: Request,
+    server: Any = Depends(get_server),
     _: Any = Depends(require_permission("providers")),
 ) -> dict[str, Any]:
     """Probe connectivity for a provider draft before it is saved."""
-    api_key = (body.api_key or "").strip()
+    stored = server.services.provider_repo.get(body.provider_id) if body.provider_id else None
+    if body.provider_id and stored is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "provider not found")
+    api_key = (body.api_key or (stored.api_key if stored else "") or "").strip()
     if not api_key:
         return {"ok": False, "error": "api_key is required"}
     model_id = body.model_id.strip()
@@ -314,7 +321,7 @@ async def admin_test_provider_draft(
         name=body.name.strip() or "draft",
         kind=body.kind,
         api_key=api_key,
-        base_url=(body.base_url or "").strip() or None,
+        base_url=(body.base_url or (stored.base_url if stored else "") or "").strip() or None,
         model_id=model_id,
         extra_json=body.extra_json,
         embedding=body.embedding,
@@ -331,6 +338,7 @@ async def admin_test_provider_draft(
 async def admin_fetch_provider_models(
     body: ProviderFetchModelsBody,
     request: Request,
+    server: Any = Depends(get_server),
     _: Any = Depends(require_permission("providers")),
 ) -> dict[str, Any]:
     """Fetch remote model ids via OpenAI-compatible ``GET /models`` (openai kind only)."""
@@ -339,16 +347,19 @@ async def admin_fetch_provider_models(
             "ok": False,
             "error": "fetch models is only supported for openai-compatible providers",
         }
-    api_key = (body.api_key or "").strip()
+    stored = server.services.provider_repo.get(body.provider_id) if body.provider_id else None
+    if body.provider_id and stored is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "provider not found")
+    api_key = (body.api_key or (stored.api_key if stored else "") or "").strip()
     if not api_key:
         return {"ok": False, "error": "api_key is required"}
     draft = SimpleNamespace(extra_json=body.extra_json)
     return await fetch_openai_compatible_models(
-        base_url=(body.base_url or "").strip() or None,
+        base_url=(body.base_url or (stored.base_url if stored else "") or "").strip() or None,
         api_key=api_key,
         extra_headers=provider_headers(draft) or None,
         locale=resolve_request_locale(request),
-        provider_name=(body.name or "").strip() or None,
+        provider_name=(body.name or (stored.name if stored else "") or "").strip() or None,
     )
 
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -13,6 +13,8 @@ vi.mock("../api/modules/auth", () => ({
 }));
 
 vi.mock("../api/request", () => ({
+  AUTH_TOKEN_CHANGED_EVENT: "octop:auth-token-changed",
+  AUTH_TOKEN_STORAGE_KEY: "auth_token",
   getAuthToken: vi.fn(() => null),
   clearAuthToken: vi.fn(),
 }));
@@ -30,6 +32,8 @@ describe("AuthGuard offline boot", () => {
     vi.mocked(authApi.me).mockReset();
     vi.mocked(getAuthToken).mockReset();
     vi.mocked(getAuthToken).mockReturnValue(null);
+    localStorage.clear();
+    sessionStorage.clear();
   });
 
   it("shows offline panel instead of the protected shell when setup/status fails", async () => {
@@ -88,7 +92,10 @@ describe("AuthGuard offline boot", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("protected-shell")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(authApi.me).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("protected-shell")).toBeInTheDocument();
+    });
     await waitFor(() => {
       expect(authApi.getAuthStatus).toHaveBeenCalledTimes(1);
     });
@@ -128,6 +135,89 @@ describe("AuthGuard offline boot", () => {
       name: /errors\.retry|Retry|重试/,
     });
     await user.click(retry);
+    await waitFor(() => {
+      expect(screen.getByText("protected-shell")).toBeInTheDocument();
+    });
+  });
+
+  it("mounts the cached local shell when the control plane times out", async () => {
+    vi.mocked(getAuthToken).mockReturnValue("tok");
+    vi.mocked(authApi.getAuthStatus).mockResolvedValue({
+      setup_required: false,
+      has_admin: true,
+    } as never);
+    const cachedUser = {
+      id: 7,
+      username: "member",
+      role: "user",
+      locale: "zh",
+    };
+    localStorage.setItem("octop:cached-user", JSON.stringify(cachedUser));
+    const timeout = new Error("Request timed out after 15000ms");
+    timeout.name = "TimeoutError";
+    vi.mocked(authApi.me)
+      .mockRejectedValueOnce(timeout)
+      .mockResolvedValueOnce({
+        ...cachedUser,
+        display_name: null,
+      } as never);
+
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <AuthGuard>
+          <div>protected-shell</div>
+        </AuthGuard>
+      </MemoryRouter>,
+    );
+
     expect(await screen.findByText("protected-shell")).toBeInTheDocument();
+    expect(screen.getByTestId("auth-offline-banner")).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "重新同步" }));
+    await waitFor(() => {
+      expect(authApi.me).toHaveBeenCalledTimes(2);
+      expect(
+        screen.queryByTestId("auth-offline-banner"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("drops the protected projection when the same tab replaces its token", async () => {
+    vi.mocked(getAuthToken).mockReturnValue("admin-token");
+    vi.mocked(authApi.getAuthStatus).mockResolvedValue({
+      setup_required: false,
+      has_admin: true,
+    } as never);
+    vi.mocked(authApi.me).mockResolvedValue({
+      id: 1,
+      username: "admin",
+      role: "admin",
+      locale: "zh",
+    } as never);
+
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <AuthGuard>
+          <div>protected-shell</div>
+        </AuthGuard>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("protected-shell")).toBeInTheDocument();
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("octop:auth-token-changed", {
+          detail: {
+            previous: "admin-token",
+            next: "member-token",
+            reason: "set",
+          },
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("protected-shell")).not.toBeInTheDocument();
+    });
   });
 });

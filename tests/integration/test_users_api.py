@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.support.auth import bearer, login
+
 
 async def test_create_list_get_delete(env):
     c, srv, auth = env
@@ -16,6 +18,10 @@ async def test_create_list_get_delete(env):
     r = await c.get("/api/users", headers=auth)
     usernames = [u["username"] for u in r.json()]
     assert "alice" in usernames
+    current = next(u for u in r.json() if u["username"] == "admin")
+    assert current["is_current_user"] is True
+    alice = next(u for u in r.json() if u["username"] == "alice")
+    assert alice["is_current_user"] is False
 
     r = await c.get(f"/api/users/{uid}", headers=auth)
     assert r.json()["username"] == "alice"
@@ -65,6 +71,51 @@ async def test_non_admin_gets_403(env):
     user_auth = {"Authorization": f"Bearer {tok}"}
     r = await c.get("/api/users", headers=user_auth)
     assert r.status_code == 403
+
+
+async def test_admin_and_regular_user_identity_stays_bound_to_their_token(env):
+    """The identity shown by ``/auth/me`` must match the token used by admin APIs.
+
+    This is a regression guard for the desktop report where the shell showed
+    ``admin`` while a stale regular-user token was still used by ``/users``.
+    Keep both responses in the same request sequence so a future auth context
+    or token-storage change cannot silently mix the two accounts.
+    """
+    c, _srv, admin_auth = env
+    created = await c.post(
+        "/api/users",
+        headers=admin_auth,
+        json={
+            "username": "abcde12345",
+            "password": "TestPass12",
+            "role": "user",
+            "permissions": [],
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    admin_me = await c.get("/api/auth/me", headers=admin_auth)
+    assert admin_me.status_code == 200, admin_me.text
+    admin_profile = admin_me.json()
+    assert admin_profile["username"] == "admin"
+    assert admin_profile["role"] == "admin"
+
+    listed = await c.get("/api/users", headers=admin_auth)
+    assert listed.status_code == 200, listed.text
+    admin_row = next(row for row in listed.json() if row["username"] == "admin")
+    assert admin_row["id"] == admin_profile["id"]
+    assert admin_row["is_current_user"] is True
+
+    abcde_auth = bearer(await login(c, username="abcde12345", password="TestPass12"))
+    abcde_me = await c.get("/api/auth/me", headers=abcde_auth)
+    assert abcde_me.status_code == 200, abcde_me.text
+    abcde_profile = abcde_me.json()
+    assert abcde_profile["username"] == "abcde12345"
+    assert abcde_profile["role"] == "user"
+    assert abcde_profile["id"] != admin_profile["id"]
+
+    denied = await c.get("/api/users", headers=abcde_auth)
+    assert denied.status_code == 403, denied.text
 
 
 async def test_admin_cannot_delete_self(env):

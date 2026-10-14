@@ -2,6 +2,10 @@ import { request } from "../request";
 
 export interface UpdateStatus {
   current_version: string;
+  /** Yunmell product version; ``current_version`` remains official for API compatibility. */
+  product_version?: string;
+  /** OpenOct/Octop baseline integrated by this build. */
+  official_baseline_version?: string;
   latest_version: string | null;
   has_update: boolean;
   is_editable: boolean;
@@ -21,6 +25,24 @@ export interface UpdateStatus {
   stable_only?: boolean;
   /** True when latest_version is a PEP 440 pre-release. */
   latest_is_prerelease?: boolean;
+}
+
+export type UpdateChannel = "official" | "yunmell";
+
+export interface UpdateChannelStatus {
+  channel: UpdateChannel;
+  current_version: string;
+  latest_version: string | null;
+  has_update: boolean;
+  latest_is_prerelease: boolean;
+  release_notes: string | null;
+  source: string | null;
+  source_url: string | null;
+  error: string | null;
+  last_check_time: string | null;
+  stable_only: boolean;
+  baseline_commit: string | null;
+  upgrade_mode: "upstream_sync" | "release";
 }
 
 export interface UpgradeStarted {
@@ -45,6 +67,30 @@ export interface RestartResponse {
 }
 
 export const updateApi = {
+  getChannelStatuses: () =>
+    request<Record<UpdateChannel, UpdateChannelStatus>>(
+      "/update/channels/status",
+    ),
+  checkChannel: (channel: UpdateChannel) =>
+    request<UpdateChannelStatus>(`/update/channels/${channel}/check`, {
+      method: "POST",
+    }),
+  patchChannelSettings: (channel: UpdateChannel, stableOnly: boolean) =>
+    request<UpdateChannelStatus>(`/update/channels/${channel}/settings`, {
+      method: "PATCH",
+      body: JSON.stringify({ stable_only: stableOnly }),
+    }),
+  upgradeChannel: (channel: UpdateChannel, version?: string | null) =>
+    request<{
+      channel: UpdateChannel;
+      status: string;
+      task_id?: string;
+      source_url?: string | null;
+      version?: string | null;
+    }>(`/update/channels/${channel}/upgrade`, {
+      method: "POST",
+      body: JSON.stringify({ version: version || null }),
+    }),
   getUpdateStatus: () => request<UpdateStatus>("/update/status"),
   checkForUpdates: () =>
     request<UpdateStatus>("/update/check", { method: "POST" }),

@@ -109,6 +109,12 @@ import {
   knowledgeBreadcrumb,
   shouldOpenKnowledgeFolder,
 } from "./knowledgeFolder";
+import {
+  cacheKnowledgeBases,
+  readCachedKnowledgeBases,
+  splitKnowledgeBases,
+  type KnowledgeLibraryScope,
+} from "./knowledgeLibrary";
 import { resolveKnowledgeDeepLink } from "./knowledgeDeepLink";
 import {
   canDownloadKnowledgeOriginal,
@@ -117,6 +123,7 @@ import {
   isEditableKnowledgeDocument,
   isKnowledgeMarkdownDocument,
 } from "../../utils/knowledgeDocPreview";
+import { resolvePersonalReadiness } from "./personalReadiness";
 import TextDocumentEditorModal, {
   type TextDocumentFormat,
 } from "./TextDocumentEditorModal";
@@ -276,6 +283,105 @@ function ReadinessRow({
   );
 }
 
+function PersonalReadinessCard({
+  readiness,
+  modelOptions,
+  onDownload,
+  onActivate,
+  onInstallOcr,
+  ocrInstalling,
+  onOpenSettings,
+}: {
+  readiness: ReturnType<typeof resolvePersonalReadiness>;
+  modelOptions: KnowledgeOnnxModel[];
+  onDownload: (modelId: string) => void;
+  onActivate: (modelId: string) => void;
+  onInstallOcr: () => void;
+  ocrInstalling: boolean;
+  onOpenSettings?: () => void;
+}) {
+  const { t } = useTranslation();
+  const selectedModel = readiness.model || modelOptions[0]?.id || null;
+  const selectedEntry = selectedModel
+    ? modelOptions.find((model) => model.id === selectedModel)
+    : undefined;
+  return (
+    <Alert
+      className={styles.personalReadiness}
+      type="warning"
+      showIcon
+      message={t("knowledgeBases.personalLocalTitle")}
+      description={
+        <div className={styles.personalReadinessBody}>
+          <Typography.Text>
+            {readiness.downloaded
+              ? t("knowledgeBases.personalLocalNotReady", {
+                  model: selectedModel || t("knowledgeBases.localOnnx"),
+                })
+              : t("knowledgeBases.personalLocalNeedModel", {
+                  model: selectedModel || t("knowledgeBases.localOnnx"),
+                })}
+          </Typography.Text>
+          <div className={styles.personalReadinessActions}>
+            {readiness.canDownload && selectedModel ? (
+              <Button
+                size="small"
+                type="primary"
+                icon={<Download size={13} />}
+                onClick={() => onDownload(selectedModel)}
+              >
+                {t("knowledgeBases.downloadModel")}
+                {selectedEntry?.size_gb
+                  ? ` · ${formatSizeGb(selectedEntry.size_gb)}`
+                  : ""}
+              </Button>
+            ) : null}
+            {readiness.canActivate && selectedModel ? (
+              <Button
+                size="small"
+                type="primary"
+                icon={<Check size={13} />}
+                onClick={() => onActivate(selectedModel)}
+              >
+                {t("knowledgeBases.enableLocalModel")}
+              </Button>
+            ) : null}
+            {!selectedModel && onOpenSettings ? (
+              <Button size="small" onClick={onOpenSettings}>
+                {t("knowledgeBases.settingsTitle")}
+              </Button>
+            ) : null}
+            {readiness.downloadInProgress ? (
+              <Typography.Text type="secondary">
+                {t("knowledgeBases.localModelBusy")}
+              </Typography.Text>
+            ) : null}
+          </div>
+          <div className={styles.personalReadinessOcr}>
+            <Typography.Text
+              type="secondary"
+              className={styles.personalReadinessHint}
+            >
+              {readiness.ocrUsable
+                ? t("knowledgeBases.personalOcrReady")
+                : t("knowledgeBases.personalOcrOptional")}
+            </Typography.Text>
+            {!readiness.ocrUsable ? (
+              <Button
+                size="small"
+                loading={ocrInstalling}
+                onClick={onInstallOcr}
+              >
+                {t("knowledgeBases.installPersonalOcr")}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      }
+    />
+  );
+}
+
 export default function KnowledgeBasesPage() {
   const { t } = useTranslation();
   const { modal, message } = App.useApp();
@@ -286,10 +392,17 @@ export default function KnowledgeBasesPage() {
   const timeZone = useServerTimezone();
   const user = useCurrentUser();
   const canConfigureKb = userCan(user, "knowledge_settings");
+  const canUseKnowledge = userCan(user, "knowledge_bases");
   const { viewMode, setViewMode, showCardView } = useCardTableView(
     loadDocsViewMode(),
   );
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
+  const [enterpriseBases, setEnterpriseBases] = useState<KnowledgeBase[]>([]);
+  const [libraryScope, setLibraryScope] =
+    useState<KnowledgeLibraryScope>("personal");
+  const [basesError, setBasesError] = useState<string | null>(null);
+  const [enterpriseError, setEnterpriseError] = useState<string | null>(null);
+  const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const [selected, setSelected] = useState<KnowledgeBase | null>(null);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [currentFolder, setCurrentFolder] = useState("");
@@ -305,6 +418,7 @@ export default function KnowledgeBasesPage() {
   );
   const [catalog, setCatalog] = useState<KnowledgeOnnxModel[]>([]);
   const [onnxDownloading, setOnnxDownloading] = useState(false);
+  const [ocrInstalling, setOcrInstalling] = useState(false);
   const [downloadProgressOpen, setDownloadProgressOpen] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadProgressLabel, setDownloadProgressLabel] = useState("");
@@ -681,17 +795,53 @@ export default function KnowledgeBasesPage() {
     useListPanelCollapsed("octop:knowledge-bases:list-collapsed");
 
   const canManageSelected = Boolean(
-    selected && canManageKnowledgeBase(selected, user),
+    selected && !selected.read_only && canManageKnowledgeBase(selected, user),
   );
   const canWriteSelected = canManageSelected;
-  const usable = Boolean(capability?.usable);
-  const supportedDocumentTypes = capability?.ocr?.usable
+  const personalReadiness = useMemo(
+    () =>
+      resolvePersonalReadiness(
+        capability,
+        catalog,
+        onnxDownloading
+          ? {
+              status: "downloading",
+              progress: downloadProgress / 100,
+              model_name: downloadProgressModel,
+            }
+          : null,
+      ),
+    [
+      capability,
+      catalog,
+      downloadProgress,
+      downloadProgressModel,
+      onnxDownloading,
+    ],
+  );
+  // The enterprise feature switch only gates the shared index.  Personal
+  // libraries use the local ONNX readiness reported by the desktop runtime.
+  const usable =
+    libraryScope === "personal"
+      ? personalReadiness.usable
+      : Boolean(capability?.usable);
+  const selectedUsable = selected?.read_only
+    ? Boolean(capability?.usable)
+    : personalReadiness.usable;
+  const selectedOcrUsable = selected?.read_only
+    ? Boolean(capability?.ocr?.usable)
+    : personalReadiness.ocrUsable;
+  const supportedDocumentTypes = selectedOcrUsable
     ? `${BASE_DOCUMENT_TYPES},${OCR_DOCUMENT_TYPES}`
     : BASE_DOCUMENT_TYPES;
   const limits = capability?.limits ?? DEFAULT_KNOWLEDGE_LIMITS;
-  const ownedBaseCount = user
-    ? bases.filter((base) => base.owner_user_id === user.id).length
-    : 0;
+  const { personal: personalBases } = useMemo(
+    () => splitKnowledgeBases(bases, user?.id),
+    [bases, user?.id],
+  );
+  const visibleBases =
+    libraryScope === "personal" ? personalBases : enterpriseBases;
+  const ownedBaseCount = personalBases.length;
   const atBaseLimit = ownedBaseCount >= limits.max_bases_per_owner;
   const fileCount = documents.filter((document) => !document.is_dir).length;
   const isAtDocumentLimit =
@@ -713,18 +863,46 @@ export default function KnowledgeBasesPage() {
   );
 
   const loadBases = useCallback(async () => {
+    setBasesError(null);
     try {
       const rows = await knowledgeBasesApi.list();
       setBases(rows);
+      if (user?.id != null) cacheKnowledgeBases(user.id, rows);
       setSelected((current) =>
         current && !rows.some((row) => row.id === current.id) ? null : current,
       );
     } catch (error) {
-      message.error(apiErrorMessage(error, t("knowledgeBases.loadFailed"), t));
+      const messageText = apiErrorMessage(
+        error,
+        t("knowledgeBases.loadFailed"),
+        t,
+      );
+      setBasesError(messageText);
+      if (user?.id != null) {
+        const cached = readCachedKnowledgeBases(user.id);
+        if (cached.length > 0) {
+          setBases(cached);
+          return;
+        }
+      }
+      setBases([]);
+    }
+  }, [t, user?.id]);
+
+  const loadEnterpriseBases = useCallback(async () => {
+    setEnterpriseError(null);
+    try {
+      setEnterpriseBases(await knowledgeBasesApi.listEnterprise());
+    } catch (error) {
+      setEnterpriseError(
+        apiErrorMessage(error, t("knowledgeBases.loadFailed"), t),
+      );
+      setEnterpriseBases([]);
     }
   }, [t]);
 
   const loadCapability = useCallback(async () => {
+    setCapabilityError(null);
     try {
       const nextCapability = await knowledgeBasesApi.getCapability();
       setCapability(nextCapability);
@@ -737,12 +915,14 @@ export default function KnowledgeBasesPage() {
       setOcrModel(nextCapability.ocr?.model || "rapidocr");
       setOcrProviderId(nextCapability.ocr?.provider_id || undefined);
     } catch (error) {
-      message.error(apiErrorMessage(error, t("knowledgeBases.loadFailed"), t));
+      setCapabilityError(
+        apiErrorMessage(error, t("knowledgeBases.loadFailed"), t),
+      );
     }
   }, [t]);
 
   const loadEmbeddingOptions = useCallback(
-    async (allOnnx = false) => {
+    async (allOnnx = false, silent = false) => {
       if (allOnnx) {
         setOnnxExpanding(true);
       } else {
@@ -760,16 +940,18 @@ export default function KnowledgeBasesPage() {
         }
         return options;
       } catch (error) {
-        message.error(
-          apiErrorMessage(error, t("knowledgeBases.loadFailed"), t),
-        );
+        if (!silent) {
+          message.error(
+            apiErrorMessage(error, t("knowledgeBases.loadFailed"), t),
+          );
+        }
         return undefined;
       } finally {
         setFeatureOptionsLoading(false);
         setOnnxExpanding(false);
       }
     },
-    [t],
+    [message, t],
   );
 
   const loadOcrOptions = useCallback(async () => {
@@ -781,7 +963,7 @@ export default function KnowledgeBasesPage() {
       message.error(apiErrorMessage(error, t("knowledgeBases.loadFailed"), t));
       return undefined;
     }
-  }, [t]);
+  }, [message, t]);
 
   const stopOnnxDownloadWatch = useCallback(() => {
     if (onnxDownloadTimer.current) {
@@ -818,6 +1000,7 @@ export default function KnowledgeBasesPage() {
       if (status === "done") {
         try {
           await knowledgeBasesApi.activateOnnx(modelId);
+          await loadCapability();
           message.success(t("knowledgeBases.onnxServiceEnabled"));
         } catch (activateError) {
           message.success(t("models.onnxDownloadDone", { model: modelId }));
@@ -833,7 +1016,7 @@ export default function KnowledgeBasesPage() {
       }
       message.error(error || t("models.onnxDownloadFailed"));
     },
-    [loadEmbeddingOptions, stopOnnxDownloadWatch, t],
+    [loadCapability, loadEmbeddingOptions, message, stopOnnxDownloadWatch, t],
   );
 
   const watchOnnxDownloadStatus = useCallback(
@@ -887,6 +1070,16 @@ export default function KnowledgeBasesPage() {
       const requestId = detailRequestGate.current.begin();
       if (!options?.silent) setDetailLoading(true);
       try {
+        if (libraryScope === "enterprise") {
+          const base = await knowledgeBasesApi.getEnterprise(id);
+          const nextDocuments = await knowledgeBasesApi.listEnterpriseDocuments(
+            id,
+          );
+          if (!detailRequestGate.current.isCurrent(requestId)) return;
+          setSelected(base);
+          setDocuments(nextDocuments);
+          return;
+        }
         const [base, nextDocuments] = await Promise.all([
           knowledgeBasesApi.get(id),
           knowledgeBasesApi.listDocuments(id),
@@ -915,7 +1108,7 @@ export default function KnowledgeBasesPage() {
         }
       }
     },
-    [t],
+    [libraryScope, message, t],
   );
 
   useEffect(() => {
@@ -927,6 +1120,20 @@ export default function KnowledgeBasesPage() {
       setLoading(false),
     );
   }, [loadBases, loadCapability]);
+
+  // Personal users still need the local model catalog to download/activate
+  // ONNX.  Older servers may return 403 here; keep that failure silent and
+  // leave the document UI usable for already-indexed text libraries.
+  useEffect(() => {
+    if (canConfigureKb || libraryScope !== "personal") return;
+    void loadEmbeddingOptions(false, true);
+  }, [canConfigureKb, libraryScope, loadEmbeddingOptions]);
+
+  useEffect(() => {
+    if (libraryScope === "enterprise" && canUseKnowledge) {
+      void loadEnterpriseBases();
+    }
+  }, [canUseKnowledge, libraryScope, loadEnterpriseBases]);
 
   useEffect(() => {
     const indexing = documents.some(
@@ -941,10 +1148,17 @@ export default function KnowledgeBasesPage() {
     return () => window.clearInterval(timer);
   }, [documents, loadDetail, selected]);
   useEffect(() => {
-    if (!isMobile && !selected && bases.length > 0 && !detailLoading) {
-      void loadDetail(bases[0].id);
+    if (!isMobile && !selected && visibleBases.length > 0 && !detailLoading) {
+      void loadDetail(visibleBases[0].id);
     }
-  }, [bases, detailLoading, isMobile, loadDetail, selected]);
+  }, [detailLoading, isMobile, loadDetail, selected, visibleBases]);
+
+  useEffect(() => {
+    if (selected && !visibleBases.some((base) => base.id === selected.id)) {
+      setSelected(null);
+      setDocuments([]);
+    }
+  }, [selected, visibleBases]);
 
   useEffect(() => {
     if (!isMobile) setMobilePane("list");
@@ -956,6 +1170,9 @@ export default function KnowledgeBasesPage() {
       await Promise.all([
         loadBases(),
         loadCapability(),
+        libraryScope === "enterprise"
+          ? loadEnterpriseBases()
+          : Promise.resolve(),
         selected ? loadDetail(selected.id) : Promise.resolve(),
       ]);
     } finally {
@@ -1279,13 +1496,52 @@ export default function KnowledgeBasesPage() {
     });
   };
 
+  const activatePersonalOnnx = async (modelId: string) => {
+    setOnnxDownloading(true);
+    setDownloadProgressModel(modelId);
+    setDownloadProgressLabel(t("knowledgeBases.localModelEnabling"));
+    setDownloadProgressOpen(true);
+    try {
+      await knowledgeBasesApi.activateOnnx(modelId);
+      await loadCapability();
+      setDownloadProgressOpen(false);
+      message.success(t("knowledgeBases.localModelEnabled"));
+    } catch (error) {
+      setDownloadProgressOpen(false);
+      message.error(
+        apiErrorMessage(error, t("knowledgeBases.localModelEnableFailed"), t),
+      );
+    } finally {
+      setOnnxDownloading(false);
+    }
+  };
+
+  const installPersonalOcr = async () => {
+    setOcrInstalling(true);
+    try {
+      const result = await knowledgeBasesApi.installPersonalOcr();
+      await loadCapability();
+      if (result.ready) {
+        message.success(t("knowledgeBases.personalOcrInstalled"));
+      } else {
+        message.warning(t("knowledgeBases.personalOcrInstallFailed"));
+      }
+    } catch (error) {
+      message.error(
+        apiErrorMessage(error, t("knowledgeBases.personalOcrInstallFailed"), t),
+      );
+    } finally {
+      setOcrInstalling(false);
+    }
+  };
+
   const dismissDownloadProgressToBackground = () => {
     setDownloadProgressOpen(false);
     message.info(t("models.localDownloadBackground"));
   };
 
   const uploadDocuments = async (files: FileList | File[] | null) => {
-    if (!selected || !files || !usable || isAtDocumentLimit) return;
+    if (!selected || !files || !selectedUsable || isAtDocumentLimit) return;
     const remaining = Math.max(
       0,
       (selected?.max_documents ?? limits.max_docs_per_kb) - fileCount,
@@ -1359,7 +1615,7 @@ export default function KnowledgeBasesPage() {
   };
 
   const canDropUpload =
-    canWriteSelected && usable && !isAtDocumentLimit && !uploadState;
+    canWriteSelected && selectedUsable && !isAtDocumentLimit && !uploadState;
 
   const resetDragActive = () => {
     dragDepthRef.current = 0;
@@ -1508,6 +1764,20 @@ export default function KnowledgeBasesPage() {
     try {
       // Prefer raw UTF-8 for editable text so markdown preview matches the file.
       if (asMarkdown || isEditableKnowledgeDocument(document)) {
+        if (selected.read_only) {
+          const preview = await knowledgeBasesApi.previewEnterpriseDocument(
+            selected.id,
+            document.id,
+          );
+          if (abort.signal.aborted) return;
+          setPreviewFilename(preview.filename);
+          setPreviewText(
+            preview.text.trim()
+              ? preview.text
+              : t("knowledgeBases.previewEmpty"),
+          );
+          return;
+        }
         const payload = await knowledgeBasesApi.getTextDocument(
           selected.id,
           document.id,
@@ -1518,10 +1788,12 @@ export default function KnowledgeBasesPage() {
           payload.text.trim() ? payload.text : t("knowledgeBases.previewEmpty"),
         );
       } else {
-        const preview = await knowledgeBasesApi.previewDocument(
-          selected.id,
-          document.id,
-        );
+        const preview = selected.read_only
+          ? await knowledgeBasesApi.previewEnterpriseDocument(
+              selected.id,
+              document.id,
+            )
+          : await knowledgeBasesApi.previewDocument(selected.id, document.id);
         if (abort.signal.aborted) return;
         setPreviewFilename(preview.filename);
         setPreviewText(
@@ -1853,8 +2125,19 @@ export default function KnowledgeBasesPage() {
   const showListPane = !isMobile || mobilePane === "list";
   const showDetailPane = !isMobile || mobilePane === "detail";
   const showListPanel = showListPane && (isMobile || !listPanelCollapsed);
-  const showEnableGuide = !loading && !usable;
-  const showEmptyGuide = !loading && usable && bases.length === 0;
+  const showEnableGuide =
+    !loading &&
+    !basesError &&
+    canConfigureKb &&
+    !usable &&
+    personalBases.length === 0 &&
+    libraryScope === "personal";
+  const showEmptyGuide =
+    !loading &&
+    !basesError &&
+    canUseKnowledge &&
+    visibleBases.length === 0 &&
+    libraryScope === "personal";
   const emptyLayoutClassName = styles.emptyLayout;
   const setupMascot = <OctopEmptyMascot />;
 
@@ -1937,7 +2220,11 @@ export default function KnowledgeBasesPage() {
             plain
             icon={setupMascot}
             title={t("knowledgeBases.emptyGuideTitle")}
-            description={t("knowledgeBases.emptyGuideDesc")}
+            description={
+              !usable && !canConfigureKb
+                ? t("knowledgeBases.unavailableDescriptionNonAdmin")
+                : t("knowledgeBases.emptyGuideDesc")
+            }
             steps={[
               {
                 label: t("knowledgeBases.emptyGuideStepWhat"),
@@ -1971,12 +2258,61 @@ export default function KnowledgeBasesPage() {
             } as CSSProperties
           }
         >
+          {(basesError || enterpriseError || capabilityError) && (
+            <Alert
+              className={styles.libraryAlert}
+              type="warning"
+              showIcon
+              message={
+                basesError || enterpriseError
+                  ? t("knowledgeBases.offlineNotice", {
+                      defaultValue:
+                        "企业知识库暂时无法同步；个人知识库显示最近一次成功加载的数据。",
+                    })
+                  : capabilityError
+              }
+              description={
+                (enterpriseError || basesError) && libraryScope === "enterprise"
+                  ? t("knowledgeBases.enterpriseUnavailable", {
+                      defaultValue:
+                        "企业知识库需要连接企业管理服务后才能刷新。",
+                    })
+                  : undefined
+              }
+            />
+          )}
           {showListPanel ? (
             <aside className={styles.baseList}>
               <div className={styles.listPanelHeader}>
-                <span className={styles.listPanelTitle}>
-                  {t("knowledgeBases.title")}
-                </span>
+                <div className={styles.listPanelTitleGroup}>
+                  <span className={styles.listPanelTitle}>
+                    {t("knowledgeBases.title")}
+                  </span>
+                  <Segmented
+                    size="small"
+                    aria-label={t("knowledgeBases.scopeLabel", {
+                      defaultValue: "知识库范围",
+                    })}
+                    value={libraryScope}
+                    onChange={(value) =>
+                      setLibraryScope(value as KnowledgeLibraryScope)
+                    }
+                    options={[
+                      {
+                        label: t("knowledgeBases.personal", {
+                          defaultValue: "我的知识库",
+                        }),
+                        value: "personal",
+                      },
+                      {
+                        label: t("knowledgeBases.enterprise", {
+                          defaultValue: "企业知识库",
+                        }),
+                        value: "enterprise",
+                      },
+                    ]}
+                  />
+                </div>
                 {!isMobile ? (
                   <Tooltip title={t("knowledgeBases.collapseListPanel")}>
                     <button
@@ -1994,7 +2330,11 @@ export default function KnowledgeBasesPage() {
                 <Button
                   type="primary"
                   icon={<Plus size={15} />}
-                  disabled={!usable || atBaseLimit}
+                  disabled={
+                    !canUseKnowledge ||
+                    libraryScope !== "personal" ||
+                    atBaseLimit
+                  }
                   onClick={openCreate}
                 >
                   {t("knowledgeBases.create")}
@@ -2015,7 +2355,7 @@ export default function KnowledgeBasesPage() {
                 <List
                   className={styles.list}
                   split={false}
-                  dataSource={bases}
+                  dataSource={visibleBases}
                   locale={{
                     emptyText: (
                       <Empty
@@ -2182,6 +2522,21 @@ export default function KnowledgeBasesPage() {
                           name: formatKnowledgeOwner(selected),
                         })}
                       </Typography.Text>
+                      <Tag color={selected.read_only ? "blue" : "green"}>
+                        {selected.read_only
+                          ? t("knowledgeBases.enterprise")
+                          : t("knowledgeBases.personal")}
+                      </Tag>
+                      <Tag color={selectedUsable ? "success" : "warning"}>
+                        {selected.read_only
+                          ? t("knowledgeBases.enterpriseModelStatus")
+                          : t(
+                              selectedUsable
+                                ? "knowledgeBases.personalModelReady"
+                                : "knowledgeBases.personalModelPending",
+                              { model: personalReadiness.model || "ONNX" },
+                            )}
+                      </Tag>
                     </div>
                   </div>
 
@@ -2194,6 +2549,29 @@ export default function KnowledgeBasesPage() {
                     onDragOver={handleDocsDragOver}
                     onDrop={handleDocsDrop}
                   >
+                    {!selected.read_only && !selectedUsable ? (
+                      <PersonalReadinessCard
+                        readiness={personalReadiness}
+                        modelOptions={catalog}
+                        onDownload={startOnnxDownload}
+                        onActivate={activatePersonalOnnx}
+                        onInstallOcr={() => void installPersonalOcr()}
+                        ocrInstalling={ocrInstalling}
+                        onOpenSettings={
+                          canConfigureKb ? openSettings : undefined
+                        }
+                      />
+                    ) : null}
+                    {selected.read_only ? (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message={t("knowledgeBases.enterpriseReadOnly", {
+                          defaultValue:
+                            "这是企业知识库，只读查看；文档管理由企业管理员负责。",
+                        })}
+                      />
+                    ) : null}
                     {dragActive && canDropUpload ? (
                       <div className={styles.dropOverlay} aria-hidden>
                         <FileUp size={36} strokeWidth={1.75} />
@@ -2271,7 +2649,11 @@ export default function KnowledgeBasesPage() {
                             type="primary"
                             icon={<FileUp size={14} />}
                             loading={Boolean(uploadState)}
-                            disabled={isAtDocumentLimit || Boolean(uploadState)}
+                            disabled={
+                              !selectedUsable ||
+                              isAtDocumentLimit ||
+                              Boolean(uploadState)
+                            }
                             onClick={() => uploadRef.current?.click()}
                           >
                             {t("knowledgeBases.upload")}
@@ -2326,7 +2708,7 @@ export default function KnowledgeBasesPage() {
                           className={styles.uploadHint}
                         >
                           {t(
-                            capability?.ocr?.usable
+                            selectedOcrUsable
                               ? "knowledgeBases.uploadHintOcr"
                               : "knowledgeBases.uploadHint",
                             {

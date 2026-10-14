@@ -249,9 +249,50 @@ export const AgentCard = memo(function AgentCard({
   }, [agent.agent_id, agent.name, t]);
 
   const handleOpenChat = useCallback(() => {
-    setActiveAgent(agent.agent_id);
-    navigate(`/chat/${agent.agent_id}`);
-  }, [agent.agent_id, setActiveAgent, navigate]);
+    if (agent.bridge) {
+      setActiveAgent(agent.agent_id);
+      navigate(`/chat/${agent.agent_id}`);
+      return;
+    }
+    // Reconcile the card's local snapshot with the server before navigating.
+    // A persisted ``running`` flag can outlive a failed/restarted harness;
+    // opening chat in that window used to show ``running`` here and then
+    // return AGENT_NOT_RUNNING from the first turn.
+    void request<{
+      state: string;
+      running?: boolean;
+      last_error: string | null;
+    }>(`/agents/${agent.agent_id}`)
+      .then((latest) => {
+        setLocalState(latest.state);
+        setLocalError(latest.last_error);
+        onStateChange(agent.agent_id, latest.state);
+        if (!isAgentChatReady(latest.state, latest)) {
+          message.error(
+            formatAgentError(latest.last_error, t) ||
+              t("chat.agentNotRunningHint"),
+          );
+          void refreshAgents({ silent: true, force: true });
+          return;
+        }
+        setActiveAgent(agent.agent_id);
+        navigate(`/chat/${agent.agent_id}`);
+      })
+      .catch(() => {
+        // Preserve the existing navigation behaviour on a transient read
+        // failure; the chat page will surface the API error if it persists.
+        setActiveAgent(agent.agent_id);
+        navigate(`/chat/${agent.agent_id}`);
+      });
+  }, [
+    agent.agent_id,
+    agent.bridge,
+    setActiveAgent,
+    navigate,
+    onStateChange,
+    refreshAgents,
+    t,
+  ]);
 
   const copyAgentId = useCallback(async () => {
     const ok = await copyText(agent.agent_id);
@@ -282,6 +323,10 @@ export const AgentCard = memo(function AgentCard({
   const accent = accentColor || "#6366f1";
   const meta = getStateMeta(localState);
   const friendlyError = formatAgentError(localError, t);
+  // ``localState`` includes the card's in-flight optimistic lifecycle state;
+  // once the context refreshes, it is replaced by the server runtime
+  // projection. Do not let a previously fetched ``running`` field override a
+  // local stop/start transition.
   const chatReady = isAgentChatReady(localState);
   const sharedViewer = isSharedExpertViewer(agent);
   const isOwner = agent.is_owner !== false;

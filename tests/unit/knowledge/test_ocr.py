@@ -20,6 +20,17 @@ def test_ocr_disabled_by_default() -> None:
     assert capability["usable"] is False
 
 
+def test_disabled_unconfigured_ocr_does_not_probe_optional_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_probe() -> bool:
+        raise AssertionError("disabled unconfigured OCR must not import optional runtime")
+
+    monkeypatch.setattr(ocr, "local_ocr_deps_available", fail_probe)
+    capability = ocr.get_ocr_capability(lambda _key: None)
+    assert capability["checks"]["deps_available"] is False
+
+
 def test_set_local_ocr_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     values: dict[str, str] = {}
     monkeypatch.setattr(ocr, "local_ocr_deps_available", lambda: True)

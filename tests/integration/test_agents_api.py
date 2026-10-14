@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from octop.api.deps import resolve_user_from_token
+from octop.api.routers.chat.models import ChatTurnBody
+from octop.api.routers.chat.turn import prepare_dashboard_turn
+from octop.infra.errors import ErrorCode, OctopError
+
 
 @pytest.fixture
 async def env(env_with_provider):
@@ -107,7 +112,49 @@ async def test_start_stop(env):
     assert r.json()["state"] == "running"
 
     rows = (await c.get("/api/agents", headers=auth)).json()
-    assert any(a["agent_id"] == agent_id for a in rows)
+    stopped = next(a for a in rows if a["agent_id"] == agent_id)
+    assert stopped["state"] == "running"
+    assert stopped["running"] is True
+
+    await c.post(f"/api/agents/{agent_id}/stop", headers=auth)
+    stopped_rows = (await c.get("/api/agents", headers=auth)).json()
+    stopped = next(a for a in stopped_rows if a["agent_id"] == agent_id)
+    # The list card and chat gate must share the live runtime projection. A
+    # persisted row that used to say ``running`` must not remain chat-ready
+    # after the harness has been unloaded.
+    assert stopped["state"] == "stopped"
+    assert stopped["running"] is False
+
+    await c.post(f"/api/agents/{agent_id}/start", headers=auth)
+    final_rows = (await c.get("/api/agents", headers=auth)).json()
+    running = next(a for a in final_rows if a["agent_id"] == agent_id)
+    assert running["state"] == "running"
+    assert running["running"] is True
+
+
+async def test_disabled_expert_is_rejected_by_chat_gate(env):
+    """The chat boundary uses the same live runtime fact as the expert card."""
+    c, srv, auth = env
+    created = await c.post(
+        "/api/agents",
+        headers=auth,
+        json={"name": "chat-gate", "config": {}},
+    )
+    assert created.status_code == 201, created.text
+    agent_id = created.json()["agent_id"]
+    stopped = await c.post(f"/api/agents/{agent_id}/stop", headers=auth)
+    assert stopped.status_code == 204
+
+    token = auth["Authorization"].split(" ", 1)[1]
+    user = resolve_user_from_token(srv, token)
+    with pytest.raises(OctopError) as exc_info:
+        await prepare_dashboard_turn(
+            srv,
+            agent_id=agent_id,
+            user=user,
+            turn=ChatTurnBody(text="hello"),
+        )
+    assert exc_info.value.code is ErrorCode.AGENT_NOT_RUNNING
 
 
 async def test_status_endpoint(env):

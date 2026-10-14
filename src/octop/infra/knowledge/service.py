@@ -16,11 +16,12 @@ from octop.infra.knowledge.files import (
     document_path,
     write_document,
 )
-from octop.infra.knowledge.gate import assert_knowledge_usable
+from octop.infra.knowledge.gate import assert_knowledge_usable, personal_embedding_model
 from octop.infra.knowledge.index import KnowledgeIndex
 from octop.infra.knowledge.ocr import (
     OCR_IMAGE_SUFFIXES,
     load_ocr_config,
+    local_ocr_deps_available,
     optional_ocr_extractor,
 )
 from octop.infra.knowledge.parse import parse_document
@@ -102,16 +103,28 @@ class KnowledgeService:
         shared: bool = False,
         icon_name: str = "",
         max_documents: int = MAX_DOCS_PER_KB,
+        require_usable: bool = False,
     ) -> KnowledgeBaseRow:
-        assert_knowledge_usable(
-            self._services.settings_repo.get, getattr(self._services, "provider_repo", None)
-        )
+        # Personal knowledge-base metadata is local user data and can be
+        # created before the instance-wide embedding service is configured.
+        # Indexing and retrieval still enforce ``assert_knowledge_usable`` at
+        # their execution boundary; keeping creation independent lets a user
+        # prepare a private library while an administrator finishes the model
+        # setup.
+        if require_usable:
+            assert_knowledge_usable(
+                self._services.settings_repo.get,
+                getattr(self._services, "provider_repo", None),
+            )
         if max_documents < 0 or max_documents > MAX_KB_MAX_DOCUMENTS:
             raise ValueError(f"max_documents must be between 0 and {MAX_KB_MAX_DOCUMENTS}")
         owned = self._repo.count_bases_for_owner(owner_user_id)
         if owned >= MAX_BASES_PER_OWNER:
             raise ValueError(f"a user can own at most {MAX_BASES_PER_OWNER} knowledge bases")
-        model = (self._services.settings_repo.get("knowledge_embedding_model") or "").strip()
+        if shared:
+            model = (self._services.settings_repo.get("knowledge_embedding_model") or "").strip()
+        else:
+            model = personal_embedding_model(self._services.settings_repo.get)
         return cast(
             KnowledgeBaseRow,
             self._repo.create_base(
@@ -180,14 +193,20 @@ class KnowledgeService:
         self, kb_id: str, doc_id: str, *, actor_user_id: int, is_admin: bool = False
     ) -> dict[str, str]:
         """Return extracted plain text for a readable knowledge document."""
-        self.get_readable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
+        base = self.get_readable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
         document = self._repo.get_document(doc_id)
         if document is None or document.kb_id != kb_id:
             raise LookupError("knowledge document not found")
         if document.is_dir:
             raise LookupError("knowledge document not found")
         path = document_path(kb_id, doc_id, document.filename)
-        text = parse_document(path, ocr=optional_ocr_extractor(self._services))
+        try:
+            ocr = optional_ocr_extractor(self._services, personal=not base.shared)
+        except TypeError as exc:
+            if "unexpected keyword argument 'personal'" not in str(exc):
+                raise
+            ocr = optional_ocr_extractor(self._services)
+        text = parse_document(path, ocr=ocr)
         if len(text) > _MAX_PREVIEW_CHARS:
             text = text[:_MAX_PREVIEW_CHARS]
         return {
@@ -292,10 +311,11 @@ class KnowledgeService:
         is_admin: bool = False,
     ) -> KnowledgeDocumentRow:
         """Overwrite md/txt content and mark the document pending for reindex."""
-        assert_knowledge_usable(
-            self._services.settings_repo.get, getattr(self._services, "provider_repo", None)
-        )
-        self.get_writable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
+        base = self.get_writable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
+        if base.shared:
+            assert_knowledge_usable(
+                self._services.settings_repo.get, getattr(self._services, "provider_repo", None)
+            )
         document = self._repo.get_document(doc_id)
         if document is None or document.kb_id != kb_id:
             raise LookupError("knowledge document not found")
@@ -355,10 +375,11 @@ class KnowledgeService:
         is_admin: bool = False,
         path: str | None = None,
     ) -> KnowledgeDocumentRow:
-        assert_knowledge_usable(
-            self._services.settings_repo.get, getattr(self._services, "provider_repo", None)
-        )
         base = self.get_writable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
+        if base.shared:
+            assert_knowledge_usable(
+                self._services.settings_repo.get, getattr(self._services, "provider_repo", None)
+            )
         limit = self._max_document_bytes()
         if len(content) > limit:
             raise ValueError(f"knowledge document size exceeds maximum of {limit} bytes")
@@ -366,11 +387,21 @@ class KnowledgeService:
         name = path_basename(rel)
         if not name:
             raise ValueError("invalid knowledge document filename")
-        if (
-            Path(name).suffix.lower() in OCR_IMAGE_SUFFIXES
-            and not load_ocr_config(self._services.settings_repo.get).enabled
-        ):
-            raise ValueError("knowledge OCR must be enabled for image documents")
+        if Path(name).suffix.lower() in OCR_IMAGE_SUFFIXES:
+            if base.shared:
+                ocr_ready = load_ocr_config(self._services.settings_repo.get).enabled
+            else:
+                # Personal OCR is local-only and does not inherit the
+                # enterprise switch, but an image upload still needs the
+                # optional RapidOCR runtime installed before indexing.
+                # An explicitly enabled legacy local OCR setting also counts
+                # for backwards compatibility with existing personal bases.
+                ocr_ready = (
+                    local_ocr_deps_available()
+                    or load_ocr_config(self._services.settings_repo.get).enabled
+                )
+            if not ocr_ready:
+                raise ValueError("knowledge OCR must be enabled or installed")
         resolved_type = _resolve_content_type(name, content_type)
         if resolved_type not in _ALLOWED_CONTENT_TYPES:
             raise ValueError(f"unsupported knowledge document content type: {content_type}")
@@ -407,10 +438,11 @@ class KnowledgeService:
     def reindex_document(
         self, kb_id: str, doc_id: str, *, actor_user_id: int, is_admin: bool = False
     ) -> KnowledgeDocumentRow:
-        assert_knowledge_usable(
-            self._services.settings_repo.get, getattr(self._services, "provider_repo", None)
-        )
-        self.get_writable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
+        base = self.get_writable_base(kb_id, actor_user_id=actor_user_id, is_admin=is_admin)
+        if base.shared:
+            assert_knowledge_usable(
+                self._services.settings_repo.get, getattr(self._services, "provider_repo", None)
+            )
         document = self._repo.get_document(doc_id)
         if document is None or document.kb_id != kb_id:
             raise LookupError("knowledge document not found")

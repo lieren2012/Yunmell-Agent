@@ -90,7 +90,13 @@ class UserBatchResponse(BaseModel):
     failed: int
 
 
-def _row_to_dict(r: Any, policy: Any | None = None, server: Any = None) -> dict[str, Any]:
+def _row_to_dict(
+    r: Any,
+    policy: Any | None = None,
+    server: Any = None,
+    *,
+    current_user_id: int | None = None,
+) -> dict[str, Any]:
     now = int(time.time())
     locked_until = int(getattr(r, "login_locked_until", 0) or 0)
     locked = locked_until > now and not bool(r.disabled)
@@ -98,6 +104,7 @@ def _row_to_dict(r: Any, policy: Any | None = None, server: Any = None) -> dict[
     return {
         "id": r.id,
         "username": r.username,
+        "is_current_user": current_user_id is not None and int(r.id) == current_user_id,
         "role": r.role,
         "display_name": r.display_name,
         "email": r.email,
@@ -269,11 +276,11 @@ async def list_permission_catalog(
 
 @router.get("")
 async def list_users(
-    _: Any = Depends(require_permission("users")), server: Any = Depends(get_server)
+    actor: User = Depends(require_permission("users")), server: Any = Depends(get_server)
 ) -> list[dict[str, Any]]:
     rows = server.user_manager.list_all(include_disabled=True)
     policy_map = server.services.user_policy_repo.list_by_user_ids([r.id for r in rows])
-    return [_row_to_dict(r, policy_map.get(r.id), server) for r in rows]
+    return [_row_to_dict(r, policy_map.get(r.id), server, current_user_id=actor.id) for r in rows]
 
 
 @router.post("", status_code=201)

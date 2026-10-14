@@ -79,7 +79,7 @@ export default function Header({ onToggle, isMobile }: HeaderProps) {
         )}
         <img
           src={mobileLogoSrc}
-          alt="octop"
+          alt="云迈智能体"
           style={{
             height: 36,
             width: "auto",

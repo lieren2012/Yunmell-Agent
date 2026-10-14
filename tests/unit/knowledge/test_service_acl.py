@@ -46,6 +46,25 @@ def test_create_base_allows_shared_with_default_open(service: KnowledgeService) 
     assert kb.default_open is True
 
 
+def test_create_base_allows_personal_metadata_when_embedding_is_unconfigured(
+    service: KnowledgeService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    users = service._services.user_repo
+    owner = users.create(username="owner", password_hash="h", role="user")
+
+    def deny(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("knowledge feature is disabled")
+
+    monkeypatch.setattr(service_module, "assert_knowledge_usable", deny)
+
+    kb = service.create_base(owner_user_id=owner, name="Prepared locally")
+
+    assert kb.owner_user_id == owner
+    # Personal bases pick the deterministic local ONNX recommendation even
+    # before the model has been downloaded; indexing still reports readiness.
+    assert kb.embedding_model == "BAAI/bge-small-zh-v1.5"
+
+
 def test_update_base_allows_enabling_both_shared_and_default_open(
     service: KnowledgeService,
 ) -> None:

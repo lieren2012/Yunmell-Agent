@@ -3,8 +3,32 @@ import i18n from "../i18n";
 import { markNavigatingAway } from "../utils/reloadOnStaleChunk";
 
 const AUTH_TOKEN_KEY = "auth_token";
+/** Storage key used by the cross-tab session guard. */
+export const AUTH_TOKEN_STORAGE_KEY = AUTH_TOKEN_KEY;
+/**
+ * Same-document notification for authentication changes.
+ *
+ * ``storage`` events only reach other tabs.  The custom event lets the
+ * current AuthGuard drop its user projection immediately when logout, a
+ * 401, or a token replacement happens in this document as well.
+ */
+export const AUTH_TOKEN_CHANGED_EVENT = "octop:auth-token-changed";
+export type AuthTokenChangeReason = "set" | "renew" | "clear";
 /** sessionStorage handoff for SSO redirects / popups (default = remember). */
 const AUTH_REMEMBER_PREF_KEY = "auth_remember_pref";
+
+function notifyAuthTokenChanged(
+  previous: string,
+  next: string,
+  reason: AuthTokenChangeReason,
+): void {
+  if (typeof window === "undefined" || previous === next) return;
+  window.dispatchEvent(
+    new CustomEvent(AUTH_TOKEN_CHANGED_EVENT, {
+      detail: { previous, next, reason },
+    }),
+  );
+}
 
 /**
  * Fired when the session is no longer valid. Cancelable: a listener inside the
@@ -17,6 +41,95 @@ export const FORBIDDEN_EVENT = "octop:forbidden";
 
 /** Response header used by the server for JWT sliding renewal. */
 export const ACCESS_TOKEN_RESPONSE_HEADER = "X-Octop-Access-Token";
+
+/**
+ * Bound ordinary API calls so a stalled control-plane hop cannot leave a
+ * page-level spinner forever.  Streaming endpoints keep their own lifetime
+ * after the response headers arrive; this deadline only covers connection
+ * establishment and the initial response.
+ */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+/** Management calls leave the local runtime and should fail fast offline. */
+export const CONTROL_PLANE_REQUEST_TIMEOUT_MS = 5_000;
+export const DEFAULT_UPLOAD_TIMEOUT_MS = 60_000;
+
+export class RequestTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`Request timed out after ${timeoutMs}ms`);
+    this.name = "TimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+interface RequestTimeoutHandle {
+  signal: AbortSignal;
+  cleanup: () => void;
+}
+
+/** Combine a caller abort signal with a bounded connection deadline. */
+function createRequestTimeout(
+  external: AbortSignal | null | undefined,
+  timeoutMs: number,
+): RequestTimeoutHandle {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+  const onAbort = () => controller.abort();
+
+  if (external) {
+    if (external.aborted) {
+      onAbort();
+    } else {
+      external.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      window.clearTimeout(timer);
+      external?.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const timeout = createRequestTimeout(options.signal, timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: timeout.signal });
+  } catch (error) {
+    if (timeout.signal.aborted && !options.signal?.aborted) {
+      throw new RequestTimeoutError(timeoutMs);
+    }
+    throw error;
+  } finally {
+    timeout.cleanup();
+  }
+}
+
+function requestTimeoutForPath(path: string): number {
+  if (
+    path.startsWith("/admin/") ||
+    path === "/users" ||
+    path.startsWith("/users/") ||
+    path === "/user-roles" ||
+    path.startsWith("/user-roles/") ||
+    path === "/auth/me" ||
+    path.startsWith("/auth/me/") ||
+    path === "/auth/change-password" ||
+    path === "/auth/logout"
+  ) {
+    return CONTROL_PLANE_REQUEST_TIMEOUT_MS;
+  }
+  return DEFAULT_REQUEST_TIMEOUT_MS;
+}
 
 /** Quiet error thrown when setup lockdown blocks a non-wizard API call. */
 export class SetupRequiredError extends Error {
@@ -71,7 +184,12 @@ export function isSessionOnlyAuth(): boolean {
  * ``sessionStorage`` (cleared when the tab/window closes). SSO popups must
  * post the token back to the opener — ``sessionStorage`` is not shared.
  */
-export function setAuthToken(token: string, remember: boolean = true) {
+export function setAuthToken(
+  token: string,
+  remember: boolean = true,
+  reason: Exclude<AuthTokenChangeReason, "clear"> = "set",
+) {
+  const previous = getAuthToken();
   if (remember) {
     localStorage.setItem(AUTH_TOKEN_KEY, token);
     sessionStorage.removeItem(AUTH_TOKEN_KEY);
@@ -80,6 +198,7 @@ export function setAuthToken(token: string, remember: boolean = true) {
     localStorage.removeItem(AUTH_TOKEN_KEY);
   }
   clearSetupRequired();
+  notifyAuthTokenChanged(previous, token, reason);
 }
 
 /** Get JWT token from localStorage or (session-only) sessionStorage. */
@@ -93,18 +212,20 @@ export function getAuthToken(): string {
 
 /** Remove JWT token from both storages. */
 export function clearAuthToken() {
+  const previous = getAuthToken();
   localStorage.removeItem(AUTH_TOKEN_KEY);
   sessionStorage.removeItem(AUTH_TOKEN_KEY);
   sessionStorage.removeItem(AUTH_REMEMBER_PREF_KEY);
   localStorage.removeItem("octop:active-agent");
   setActiveAgentId(null);
+  notifyAuthTokenChanged(previous, "", "clear");
 }
 
 /** Persist a sliding-renewed access token from an API response, if present. */
 export function applyRenewedAccessToken(response: Response): void {
   const renewed = response.headers.get(ACCESS_TOKEN_RESPONSE_HEADER);
   if (renewed) {
-    setAuthToken(renewed, !isSessionOnlyAuth());
+    setAuthToken(renewed, !isSessionOnlyAuth(), "renew");
   }
 }
 
@@ -123,7 +244,9 @@ function handleSetupRequired(): void {
   if (
     path.startsWith("/setup") ||
     path.startsWith("/login") ||
-    path.startsWith("/invite")
+    path.startsWith("/invite") ||
+    path.startsWith("/register") ||
+    path.startsWith("/connection")
   ) {
     return;
   }
@@ -134,7 +257,13 @@ function handleSetupRequired(): void {
 
 /** Wizard endpoints stay reachable while lockdown is active. */
 function isSetupApiPath(path: string): boolean {
-  return path === "/setup/status" || path.startsWith("/setup/");
+  return (
+    path === "/setup/status" ||
+    path.startsWith("/setup/") ||
+    path === "/auth/connection" ||
+    path === "/auth/deployment" ||
+    path.startsWith("/auth/deployment/")
+  );
 }
 
 /**
@@ -312,7 +441,9 @@ function handleUnauthorized(): void {
   if (
     path.startsWith("/setup") ||
     path.startsWith("/login") ||
-    path.startsWith("/invite")
+    path.startsWith("/invite") ||
+    path.startsWith("/register") ||
+    path.startsWith("/connection")
   )
     return;
   _redirectingToLogin = true;
@@ -365,10 +496,14 @@ export async function request<T = unknown>(
 
   const headers = buildHeaders(path, options.headers);
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  const response = await fetchWithTimeout(
+    url,
+    {
+      ...options,
+      headers,
+    },
+    requestTimeoutForPath(path),
+  );
 
   if (await check503ForSetupRequired(path, response)) {
     throw new SetupRequiredError();
@@ -419,10 +554,14 @@ export async function requestBlob(
 
   const url = getApiUrl(path);
   const headers = buildAuthHeaders(path);
-  const response = await fetch(url, {
-    ...options,
-    headers: { ...headers, ...(options.headers as Record<string, string>) },
-  });
+  const response = await fetchWithTimeout(
+    url,
+    {
+      ...options,
+      headers: { ...headers, ...(options.headers as Record<string, string>) },
+    },
+    requestTimeoutForPath(path),
+  );
 
   if (await check503ForSetupRequired(path, response)) {
     throw new SetupRequiredError();
@@ -472,10 +611,14 @@ export async function probeAuthResource(
 
   const url = getApiUrl(path);
   const headers = buildAuthHeaders(path);
-  const response = await fetch(url, {
-    ...options,
-    headers: { ...headers, ...(options.headers as Record<string, string>) },
-  });
+  const response = await fetchWithTimeout(
+    url,
+    {
+      ...options,
+      headers: { ...headers, ...(options.headers as Record<string, string>) },
+    },
+    requestTimeoutForPath(path),
+  );
 
   if (await check503ForSetupRequired(path, response)) {
     throw new SetupRequiredError();
@@ -512,10 +655,14 @@ export async function requestStream(
 
   const url = getApiUrl(path);
   const headers = buildAuthHeaders(path);
-  const response = await fetch(url, {
-    ...options,
-    headers: { ...headers, ...(options.headers as Record<string, string>) },
-  });
+  const response = await fetchWithTimeout(
+    url,
+    {
+      ...options,
+      headers: { ...headers, ...(options.headers as Record<string, string>) },
+    },
+    requestTimeoutForPath(path),
+  );
 
   if (await check503ForSetupRequired(path, response)) {
     throw new SetupRequiredError();
@@ -564,6 +711,7 @@ export async function requestUpload<T = unknown>(
   return new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open(method, url);
+    xhr.timeout = DEFAULT_UPLOAD_TIMEOUT_MS;
 
     for (const [key, value] of Object.entries(headers)) {
       xhr.setRequestHeader(key, value);
@@ -651,6 +799,8 @@ export async function requestUpload<T = unknown>(
     };
 
     xhr.onerror = () => reject(new Error("Network error"));
+    xhr.ontimeout = () =>
+      reject(new RequestTimeoutError(DEFAULT_UPLOAD_TIMEOUT_MS));
     xhr.onabort = () =>
       reject(new DOMException("The operation was aborted.", "AbortError"));
 

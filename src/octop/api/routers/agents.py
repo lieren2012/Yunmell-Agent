@@ -158,6 +158,21 @@ def _row_dict(
             if isinstance(raw_packages, list)
             else []
         )
+    # ``last_state`` is a persisted lifecycle hint used during the next boot;
+    # the live harness registry is the source of truth for whether chat can
+    # actually run right now.  Keep the raw enabled flag for API consumers,
+    # while projecting ``state``/``running`` from the same runtime snapshot.
+    runtime_state = str(getattr(row, "last_state", None) or "unknown")
+    registry = getattr(getattr(server, "app_runtime", None), "agent_registry", None)
+    runtime_state_fn = getattr(registry, "runtime_state", None)
+    if callable(runtime_state_fn):
+        try:
+            runtime_state = str(runtime_state_fn(row.agent_id, row))
+        except Exception:
+            # Listing an agent must remain available if a runtime diagnostic
+            # probe fails.  The persisted state is the safe fallback; chat
+            # will still perform its own live-harness check before enqueueing.
+            logger.debug("runtime state probe failed for %s", row.agent_id, exc_info=True)
     payload: dict[str, Any] = {
         "id": row.id,
         "agent_id": row.agent_id,
@@ -167,7 +182,9 @@ def _row_dict(
         "persona_mbti": row.persona_mbti,
         "default_model": row.default_model,
         "system_prompt": row.system_prompt,
-        "state": row.last_state or "unknown",
+        "state": runtime_state,
+        "enabled": bool(getattr(row, "enabled", True)),
+        "running": runtime_state == "running",
         "last_error": row.last_error,
         "config": public_cfg,
         "icon": row.icon,
@@ -195,7 +212,6 @@ def _row_dict(
         **agent_runtime_values(cfg),
     }
     if payload["kind"] == "team":
-        registry = getattr(getattr(server, "app_runtime", None), "agent_registry", None)
         teams = getattr(registry, "teams", None)
         if teams is not None:
             payload["member_ids"] = teams.visible_member_ids(row.agent_id)
@@ -574,8 +590,11 @@ async def agent_status(
     _assert_agent_owner(row, user)
     channels = server.app_runtime.gateway.list_channels(agent_id)
     cron_jobs = server.app_runtime.cron_manager.list_by_agent(agent_id)
+    runtime_state = server.app_runtime.agent_registry.runtime_state(agent_id, row)
     return {
-        "state": row.last_state or "unknown",
+        "state": runtime_state,
+        "enabled": bool(getattr(row, "enabled", True)),
+        "running": runtime_state == "running",
         "last_error": row.last_error,
         "channels": [{"id": c.channel_id, "kind": c.kind, "name": c.name} for c in channels],
         "cron_jobs": [

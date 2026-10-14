@@ -42,6 +42,10 @@ def test_enterprise_repo_organizes_teams_and_members(db: SqlitePool) -> None:
     assert repo.list_members(organization.organization_id)[0].user_id == 1
     assert repo.control_allowed_for_user(1, "shell") is False
     assert repo.control_allowed_for_user(1, "filesystem") is True
+    default_org = repo.set_default_model(organization.organization_id, "openai", "gpt-5")
+    assert default_org.default_provider_name == "openai"
+    assert default_org.default_model == "gpt-5"
+    assert repo.default_model_for_user(1) == "openai/gpt-5"
 
     updated = repo.upsert_member(organization.organization_id, 1, None, "member")
     assert updated.id == member.id

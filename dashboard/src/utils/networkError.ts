@@ -25,6 +25,12 @@ export function isNetworkFetchError(error: unknown): boolean {
   ) {
     return true;
   }
+  // request.ts uses TimeoutError for bounded API calls. Treat it like a
+  // network failure so startup/auth surfaces can offer Retry instead of
+  // leaving an unbounded spinner or redirecting to login.
+  if (name === "TimeoutError") {
+    return true;
+  }
   // Chromium / Safari: TypeError("Failed to fetch") / "Load failed"
   if (name === "TypeError" && /fetch|load failed|network/i.test(message)) {
     return true;

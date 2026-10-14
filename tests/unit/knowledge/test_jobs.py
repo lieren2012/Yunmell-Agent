@@ -169,6 +169,41 @@ def test_reindex_all_updates_base_model_marks_documents_pending_and_enqueues(
     assert enqueued == [(kb.id, doc.id)]
 
 
+def test_reindex_shared_only_keeps_personal_model_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pool = SqlitePool(tmp_path / "octop.db")
+    run_migrations(pool)
+    repo = KnowledgeRepo(pool)
+    owner_id = UserRepo(pool).create(username="owner", password_hash="h", role="user")
+    shared = repo.create_base(owner_user_id=owner_id, name="Shared", shared=True)
+    personal = repo.create_base(
+        owner_user_id=owner_id, name="Personal", embedding_model="local-model"
+    )
+    shared_doc = repo.create_document(
+        kb_id=shared.id, filename="shared.md", content_type="text/markdown", byte_size=5
+    )
+    personal_doc = repo.create_document(
+        kb_id=personal.id, filename="personal.md", content_type="text/markdown", byte_size=5
+    )
+    repo.update_document(personal_doc.id, status="ready", chunk_count=1)
+    services = SimpleNamespace(knowledge_repo=repo)
+    enqueued: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        jobs,
+        "enqueue_index_document",
+        lambda _services, kb_id, doc_id: enqueued.append((kb_id, doc_id)),
+    )
+
+    jobs.reindex_all_documents(services, "enterprise-model", shared_only=True)
+
+    assert repo.get_base(shared.id).embedding_model == "enterprise-model"
+    assert repo.get_base(personal.id).embedding_model == "local-model"
+    assert repo.get_document(shared_doc.id).status == "pending"
+    assert repo.get_document(personal_doc.id).status == "ready"
+    assert enqueued == [(shared.id, shared_doc.id)]
+
+
 def test_resume_pending_index_jobs_resets_processing_and_enqueues(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -6,10 +6,10 @@ func TestDesktopTextLooksUpLocaleWithEnglishDefault(t *testing.T) {
 	if got := desktopText(LocaleZH, copyStatusReady); got != "云迈智能体已就绪" {
 		t.Fatalf("zh: %s", got)
 	}
-	if got := desktopText(LocaleEN, copyStatusReady); got != "Yunmell-Agent is ready" {
+	if got := desktopText(LocaleEN, copyStatusReady); got != "Yunmell Agent is ready" {
 		t.Fatalf("en: %s", got)
 	}
-	if got := desktopText(Locale(""), copyStatusReady); got != "Yunmell-Agent is ready" {
+	if got := desktopText(Locale(""), copyStatusReady); got != "Yunmell Agent is ready" {
 		t.Fatalf("unknown locale should fall back to English: %s", got)
 	}
 	if got := desktopText(LocaleZH, "missing.key"); got != "missing.key" {

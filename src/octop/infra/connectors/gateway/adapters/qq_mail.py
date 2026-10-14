@@ -112,15 +112,16 @@ def _email_search(creds: dict[str, Any], args: dict[str, Any]) -> str:
         uids = uids[-limit:]
         out: list[dict[str, str]] = []
         for uid in reversed(uids):
+            uid_text = uid.decode() if isinstance(uid, bytes) else str(uid)
             _typ, msg_data = imap.uid(
-                "fetch", uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])"
+                "fetch", uid_text, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])"
             )
             if not msg_data or not msg_data[0]:
                 continue
             hdr = _parse_message(msg_data[0][1])
             out.append(
                 {
-                    "uid": uid.decode(),
+                    "uid": uid_text,
                     "from": _safe_header(hdr, "From"),
                     "subject": _safe_header(hdr, "Subject"),
                     "date": _safe_header(hdr, "Date"),

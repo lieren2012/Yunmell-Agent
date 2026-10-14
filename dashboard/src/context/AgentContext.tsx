@@ -13,6 +13,8 @@ import {
   retainDisconnectedBridgeAgents,
   toBridgeShadowAgentId,
 } from "../utils/remoteExpert";
+import { isAgentChatReady } from "../utils/agentError";
+import { isNetworkFetchError } from "../utils/networkError";
 
 /**
  * Multi-Agent navigation state.
@@ -44,6 +46,11 @@ export interface OctopAgent {
   system_prompt: string | null;
   template_name: string | null;
   state: "running" | "stopped" | "failed" | "starting" | "stopping" | string;
+  /** Whether the persisted agent row is enabled. The runtime ``running``
+   * projection below is the source of truth for chat readiness. */
+  enabled?: boolean;
+  /** Live harness projection returned by the agents API. */
+  running?: boolean;
   last_error: string | null;
   icon: string | null;
   icon_name: string | null;
@@ -92,6 +99,8 @@ interface AgentContextValue {
   loading: boolean;
   /** Last fetch error message, or ``null``. */
   error: string | null;
+  /** True when the latest agent refresh failed because the local runtime is unreachable. */
+  offline: boolean;
   /** Switch the active agent (updates context + localStorage + request.ts). */
   setActiveAgent: (id: string | null) => void;
   /** Force a re-fetch of ``/api/agents`` (e.g. after creating one). */
@@ -131,7 +140,7 @@ export function selectEnabledExperts(
 ): OctopAgent[] {
   const { pinActive = false } = options;
   const enabled = agents.filter(
-    (a) => a.state === "running" || Boolean(a.bridge_disconnected),
+    (a) => isAgentChatReady(a.state, a) || Boolean(a.bridge_disconnected),
   );
   if (!pinActive || !resolvedAgentId) return enabled;
   if (enabled.some((a) => a.agent_id === resolvedAgentId)) return enabled;
@@ -192,6 +201,7 @@ const defaultValue: AgentContextValue = {
   activeAgent: null,
   loading: false,
   error: null,
+  offline: false,
   setActiveAgent: () => undefined,
   refresh: async () => undefined,
 };
@@ -339,6 +349,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   const [activeAgentId, setActiveAgentIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [offline, setOffline] = useState(false);
 
   const persistAndApply = useCallback((id: string | null) => {
     setActiveAgentIdState((prev) => {
@@ -362,6 +373,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       setError(null);
       try {
         const { agents: list, liveConnectionIds } = await fetchAgents();
+        setOffline(false);
         // Only update state when content actually changed, to prevent
         // unnecessary re-renders of every component subscribed to this context
         // (the chat page polls every 10 s to refresh unread badges).
@@ -380,6 +392,9 @@ export function AgentProvider({ children }: { children: ReactNode }) {
               return (
                 a.agent_id === b.agent_id &&
                 a.state === b.state &&
+                a.enabled === b.enabled &&
+                a.running === b.running &&
+                a.last_error === b.last_error &&
                 a.unread_count === b.unread_count &&
                 a.bootstrap_pending === b.bootstrap_pending &&
                 a.name === b.name &&
@@ -417,6 +432,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load agents");
+        setOffline(isNetworkFetchError(err));
         // On failure, leave whatever previous state was — don't blow away
         // a valid selection just because a fetch hiccuped.
       } finally {
@@ -455,6 +471,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       activeAgent,
       loading,
       error,
+      offline,
       setActiveAgent: persistAndApply,
       refresh,
     }),
@@ -464,6 +481,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       activeAgent,
       loading,
       error,
+      offline,
       persistAndApply,
       refresh,
     ],

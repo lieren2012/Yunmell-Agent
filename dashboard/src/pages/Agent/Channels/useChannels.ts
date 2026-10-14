@@ -11,7 +11,10 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { request } from "../../../api/request";
+import { authApi } from "../../../api/modules/auth";
 import { useAsyncResource } from "../../../hooks/useAsyncResource";
+import { useSetCurrentUser } from "../../../hooks/useCurrentUser";
+import { parseApiError } from "../../../utils/apiError";
 import { showApiError } from "../../../utils/showApiToast";
 
 import { message } from "@/utils/antdMessage";
@@ -49,6 +52,26 @@ export interface ChannelPatchBody {
 
 export function useChannels(agentId: string | null) {
   const { t } = useTranslation();
+  const setCurrentUser = useSetCurrentUser();
+
+  // Permission changes are enforced server-side on every request, while the
+  // dashboard keeps the /auth/me profile in React state.  If a channel call
+  // is rejected because that profile is stale, refresh it immediately so the
+  // channels tab and its controls reflect the same effective permission set.
+  const refreshPermissionsAfterForbidden = useCallback(
+    (error: unknown) => {
+      const permission = parseApiError(error)?.details?.permission;
+      if (permission !== "channels") return;
+      void authApi
+        .me()
+        .then((user) => setCurrentUser(user))
+        .catch(() => {
+          // The request layer handles an expired/invalid session.  A transient
+          // refresh failure should not mask the original channel error.
+        });
+    },
+    [setCurrentUser],
+  );
 
   const {
     data: channels,
@@ -58,8 +81,13 @@ export function useChannels(agentId: string | null) {
   } = useAsyncResource<ChannelRow[]>(
     [],
     async () => {
-      const data = await request<ChannelRow[]>(`/agents/${agentId}/channels`);
-      return data ?? [];
+      try {
+        const data = await request<ChannelRow[]>(`/agents/${agentId}/channels`);
+        return data ?? [];
+      } catch (error) {
+        refreshPermissionsAfterForbidden(error);
+        throw error;
+      }
     },
     [agentId],
     {
@@ -79,11 +107,12 @@ export function useChannels(agentId: string | null) {
         );
       } catch (error) {
         console.error("[Channels] Failed to fetch channel:", error);
+        refreshPermissionsAfterForbidden(error);
         showApiError(error, t("channels.loadDetailFailed"), t);
         return null;
       }
     },
-    [agentId, t],
+    [agentId, refreshPermissionsAfterForbidden, t],
   );
 
   const createChannel = useCallback(
@@ -101,11 +130,12 @@ export function useChannels(agentId: string | null) {
         return created;
       } catch (error) {
         console.error("[Channels] Failed to create channel:", error);
+        refreshPermissionsAfterForbidden(error);
         showApiError(error, t("channels.createFailed"), t);
         return null;
       }
     },
-    [agentId, setChannels, t],
+    [agentId, refreshPermissionsAfterForbidden, setChannels, t],
   );
 
   const updateChannel = useCallback(
@@ -128,11 +158,12 @@ export function useChannels(agentId: string | null) {
         return updated;
       } catch (error) {
         console.error("[Channels] Failed to update channel:", error);
+        refreshPermissionsAfterForbidden(error);
         showApiError(error, t("channels.updateFailed"), t);
         return null;
       }
     },
-    [agentId, setChannels, t],
+    [agentId, refreshPermissionsAfterForbidden, setChannels, t],
   );
 
   const deleteChannel = useCallback(
@@ -149,12 +180,13 @@ export function useChannels(agentId: string | null) {
         return true;
       } catch (error) {
         console.error("[Channels] Failed to delete channel:", error);
+        refreshPermissionsAfterForbidden(error);
         setChannels(previous);
         showApiError(error, t("channels.deleteFailed"), t);
         return false;
       }
     },
-    [agentId, channels, setChannels, t],
+    [agentId, channels, refreshPermissionsAfterForbidden, setChannels, t],
   );
 
   /** Probe a channel by starting/stopping it. Returns ``ok`` / ``error``. */
@@ -168,13 +200,14 @@ export function useChannels(agentId: string | null) {
         );
       } catch (error) {
         console.error("[Channels] Failed to probe channel:", error);
+        refreshPermissionsAfterForbidden(error);
         return {
           ok: false,
           error: error instanceof Error ? error.message : "test failed",
         };
       }
     },
-    [agentId],
+    [agentId, refreshPermissionsAfterForbidden],
   );
 
   /** Probe draft credentials without saving the channel row. */
@@ -194,13 +227,14 @@ export function useChannels(agentId: string | null) {
         );
       } catch (error) {
         console.error("[Channels] Failed to probe channel config:", error);
+        refreshPermissionsAfterForbidden(error);
         return {
           ok: false,
           error: error instanceof Error ? error.message : "probe failed",
         };
       }
     },
-    [agentId],
+    [agentId, refreshPermissionsAfterForbidden],
   );
 
   return {

@@ -72,9 +72,12 @@ import {
   userRoleLabel,
   type UserRole,
 } from "../../../api/modules/userRoles";
-import { authApi } from "../../../api/modules/auth";
+import type { OctopUser } from "../../../api/modules/auth";
 import { useCardTableView } from "../../../hooks/useCardTableView";
-import { useSetCurrentUser } from "../../../hooks/useCurrentUser";
+import {
+  useCurrentUser,
+  useSetCurrentUser,
+} from "../../../hooks/useCurrentUser";
 import { useIsMobile } from "../../../hooks/useIsMobile";
 import { useServerTimezone } from "../../../hooks/useServerTimezone";
 import { apiErrorMessage } from "../../../utils/apiError";
@@ -95,12 +98,11 @@ import {
   RoleSelectLabel,
   uploadUserAvatar,
 } from "./ProfileAvatar";
+import { isCurrentUserRow, type UserIdentityRow } from "./userIdentity";
 
 const { Text } = Typography;
 
-interface UserRow {
-  id: number;
-  username: string;
+interface UserRow extends UserIdentityRow {
   /** Role-template public id: admin | user | custom ULID. */
   role: string;
   display_name: string | null;
@@ -400,7 +402,7 @@ interface UserCardGridProps {
   loading: boolean;
   agentsByUserId: Map<number, OctopAgent[]>;
   agentsLoading: boolean;
-  currentUserId: number | null;
+  currentUser: Pick<OctopUser, "id" | "username"> | null;
   permLabelByKey: Map<string, string>;
   selectedIds: number[];
   onToggleSelect: (id: number, checked: boolean) => void;
@@ -961,7 +963,7 @@ function UserCardGrid({
   loading,
   agentsByUserId,
   agentsLoading,
-  currentUserId,
+  currentUser,
   permLabelByKey,
   selectedIds,
   onToggleSelect,
@@ -991,7 +993,7 @@ function UserCardGrid({
     <div className={styles.userCardGrid}>
       {rows.map((row) => {
         const agentCount = agentsByUserId.get(row.id)?.length ?? 0;
-        const isSelf = row.id === currentUserId;
+        const isSelf = isCurrentUserRow(row, currentUser);
         const selected = selectedSet.has(row.id);
         const displayName = row.display_name?.trim() || row.username;
         const remaining = lockRemainingSeconds(row, nowSec);
@@ -1224,6 +1226,7 @@ function UserLoginLock({
 
 export default function UsersListPanel() {
   const { t } = useTranslation();
+  const currentUser = useCurrentUser();
   const setCurrentUser = useSetCurrentUser();
   const timeZone = useServerTimezone();
   const isMobile = useIsMobile();
@@ -1243,8 +1246,7 @@ export default function UsersListPanel() {
   const [resetTarget, setResetTarget] = useState<UserRow | null>(null);
   const [resetSubmitting, setResetSubmitting] = useState(false);
   const [resetForm] = Form.useForm<ResetValues>();
-  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
-  const [actorIsAdmin, setActorIsAdmin] = useState(true);
+  const actorIsAdmin = currentUser?.role === "admin";
   const [agentDrawerUser, setAgentDrawerUser] = useState<UserRow | null>(null);
   const [editAgent, setEditAgent] = useState<OctopAgent | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1295,8 +1297,9 @@ export default function UsersListPanel() {
   );
 
   const isSelfAdmin = useCallback(
-    (row: UserRow) => row.id === currentUserId && row.role === "admin",
-    [currentUserId],
+    (row: UserRow) =>
+      isCurrentUserRow(row, currentUser) && row.role === "admin",
+    [currentUser],
   );
 
   const hasLockedUser = useMemo(
@@ -1592,16 +1595,6 @@ export default function UsersListPanel() {
 
   useEffect(() => {
     void refreshAll();
-    authApi
-      .me()
-      .then((u) => {
-        setCurrentUserId(u.id);
-        setActorIsAdmin(u.role === "admin");
-      })
-      .catch(() => {
-        setCurrentUserId(null);
-        setActorIsAdmin(false);
-      });
     request<PermissionCatalogItem[]>("/users/permissions")
       .then(setPermCatalog)
       .catch(() => setPermCatalog([]));
@@ -1735,7 +1728,7 @@ export default function UsersListPanel() {
   ): Promise<boolean> => {
     if (
       patch.role === "user" &&
-      row.id === currentUserId &&
+      isCurrentUserRow(row, currentUser) &&
       row.role === "admin"
     ) {
       message.warning(t("adminUsers.demoteSelf"));
@@ -1973,7 +1966,7 @@ export default function UsersListPanel() {
           loading={loading}
           agentsByUserId={agentsByUserId}
           agentsLoading={agentsLoading}
-          currentUserId={currentUserId}
+          currentUser={currentUser}
           permLabelByKey={permLabelByKey}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelectOne}
@@ -2030,7 +2023,7 @@ export default function UsersListPanel() {
                     <span className={styles.userCellText}>
                       <span className={styles.userCellName}>
                         {displayName}
-                        {row.id === currentUserId && (
+                        {isCurrentUserRow(row, currentUser) && (
                           <span className={styles.userCellYou}>
                             {t("adminUsers.you")}
                           </span>
@@ -2172,11 +2165,11 @@ export default function UsersListPanel() {
                       username: row.username,
                     })}
                     onConfirm={() => onDelete(row)}
-                    disabled={row.id === currentUserId}
+                    disabled={isCurrentUserRow(row, currentUser)}
                   >
                     <Tooltip
                       title={
-                        row.id === currentUserId
+                        isCurrentUserRow(row, currentUser)
                           ? t("adminUsers.deleteSelf")
                           : t("common.delete")
                       }
@@ -2184,7 +2177,7 @@ export default function UsersListPanel() {
                       <button
                         type="button"
                         className={`${styles.userCardIconBtn} ${styles.userCardIconBtnDanger}`}
-                        disabled={row.id === currentUserId}
+                        disabled={isCurrentUserRow(row, currentUser)}
                         aria-label={t("common.delete")}
                       >
                         <Trash2 size={14} />

@@ -44,6 +44,20 @@ class ControlPolicyBody(BaseModel):
     network_enabled: bool = True
 
 
+class RegistrationReviewBody(BaseModel):
+    status: str = Field(pattern="^(approved|rejected|needs_info)$")
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class DefaultModelBody(BaseModel):
+    provider_name: str = Field(min_length=1, max_length=120)
+    model: str = Field(min_length=1, max_length=200)
+
+
+class RegistrationPolicyBody(BaseModel):
+    review_required: bool
+
+
 def _repo(server: Any) -> EnterpriseRepo:
     return cast(EnterpriseRepo, server.services.enterprise_repo)
 
@@ -55,20 +69,25 @@ def _name(value: str) -> str:
     return cleaned
 
 
+def _organization_payload(row: Any) -> dict[str, Any]:
+    return {
+        "organization_id": row.organization_id,
+        "name": row.name,
+        "login_slug": row.login_slug,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+        "default_provider_name": row.default_provider_name,
+        "default_model": row.default_model,
+        "registration_review_required": row.registration_review_required,
+    }
+
+
 @router.get("/organizations", summary="List enterprise organizations")
 async def list_organizations(
     _: User = Depends(require_permission("users")),
     server: Any = Depends(get_server),
 ) -> list[dict[str, Any]]:
-    return [
-        {
-            "organization_id": row.organization_id,
-            "name": row.name,
-            "created_at": row.created_at,
-            "updated_at": row.updated_at,
-        }
-        for row in _repo(server).list_organizations()
-    ]
+    return [_organization_payload(row) for row in _repo(server).list_organizations()]
 
 
 @router.post("/organizations", status_code=201, summary="Create an enterprise organization")
@@ -88,12 +107,7 @@ async def create_organization(
     server.services.audit_repo.write(
         actor=actor.username, action="organization.create", target=row.organization_id
     )
-    return {
-        "organization_id": row.organization_id,
-        "name": row.name,
-        "created_at": row.created_at,
-        "updated_at": row.updated_at,
-    }
+    return _organization_payload(row)
 
 
 @router.get("/organizations/{organization_id}/teams", summary="List organization teams")
@@ -348,3 +362,141 @@ async def set_team_controls(
         actor=actor.username, action="team.controls.update", target=team_id
     )
     return _control_payload(row)
+
+
+@router.get(
+    "/organizations/{organization_id}/registration-applications",
+    summary="List enterprise registration applications",
+)
+async def list_registration_applications(
+    organization_id: str,
+    status: str | None = None,
+    _: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> list[dict[str, Any]]:
+    repo = _repo(server)
+    if repo.get_organization(organization_id) is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "organization not found")
+    return [
+        {
+            "application_id": row.application_id,
+            "organization_id": row.organization_id,
+            "user_id": row.user_id,
+            "status": row.status,
+            "submitted_at": row.submitted_at,
+            "reviewed_at": row.reviewed_at,
+            "reviewed_by": row.reviewed_by,
+            "review_note": row.review_note,
+            "supplement": row.supplement,
+        }
+        for row in repo.list_registration_applications(organization_id, status=status)
+    ]
+
+
+@router.post(
+    "/organizations/{organization_id}/registration-applications/{application_id}/review",
+    summary="Review an enterprise registration",
+)
+async def review_registration_application(
+    organization_id: str,
+    application_id: str,
+    body: RegistrationReviewBody,
+    actor: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    repo = _repo(server)
+    current = repo.get_registration_application(application_id)
+    if current is None or current.organization_id != organization_id:
+        raise OctopError(ErrorCode.NOT_FOUND, "registration application not found")
+    try:
+        row = repo.review_registration_application(
+            application_id,
+            status=body.status,
+            reviewer_id=actor.id,
+            note=body.note,
+        )
+    except ValueError as exc:
+        raise OctopError(ErrorCode.SLASH_BAD_ARGS, str(exc), status=400) from exc
+    if body.status == "approved":
+        existing = next(
+            (item for item in repo.list_members(organization_id) if item.user_id == row.user_id),
+            None,
+        )
+        team_id = existing.team_id if existing else None
+        if (
+            team_id is None
+            and server.services.settings_repo.get("yunmell.deployment.organization")
+            == organization_id
+        ):
+            team_id = server.services.settings_repo.get("yunmell.deployment.team")
+        repo.upsert_member(
+            organization_id, row.user_id, team_id, existing.role if existing else "member"
+        )
+    server.services.audit_repo.write(
+        actor=actor.username,
+        action=f"enterprise.registration.{body.status}",
+        target=application_id,
+        payload=f"organization_id={organization_id};user_id={row.user_id}",
+    )
+    return {
+        "application_id": row.application_id,
+        "organization_id": row.organization_id,
+        "user_id": row.user_id,
+        "status": row.status,
+        "reviewed_at": row.reviewed_at,
+        "reviewed_by": row.reviewed_by,
+        "review_note": row.review_note,
+    }
+
+
+@router.put(
+    "/organizations/{organization_id}/default-model", summary="Set enterprise default model"
+)
+async def set_enterprise_default_model(
+    organization_id: str,
+    body: DefaultModelBody,
+    actor: User = Depends(require_permission("providers")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    repo = _repo(server)
+    if repo.get_organization(organization_id) is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "organization not found")
+    provider = server.services.provider_repo.get_by_name(body.provider_name.strip())
+    if provider is None or not provider.enabled:
+        raise OctopError(ErrorCode.NOT_FOUND, "provider not found or disabled")
+    model = body.model.strip()
+    if not any(str(item.get("id")) == model for item in provider.get_models()):
+        raise OctopError(
+            ErrorCode.SLASH_BAD_ARGS, "model is not configured on provider", status=400
+        )
+    row = repo.set_default_model(organization_id, provider.name, model)
+    server.services.audit_repo.write(
+        actor=actor.username,
+        action="organization.default_model.update",
+        target=organization_id,
+        payload=f"provider={provider.name};model={model}",
+    )
+    return _organization_payload(row)
+
+
+@router.put(
+    "/organizations/{organization_id}/registration-policy",
+    summary="Set enterprise registration review policy",
+)
+async def set_registration_policy(
+    organization_id: str,
+    body: RegistrationPolicyBody,
+    actor: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    repo = _repo(server)
+    if repo.get_organization(organization_id) is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "organization not found")
+    row = repo.set_registration_review_required(organization_id, body.review_required)
+    server.services.audit_repo.write(
+        actor=actor.username,
+        action="organization.registration_policy.update",
+        target=organization_id,
+        payload=f"review_required={body.review_required}",
+    )
+    return _organization_payload(row)

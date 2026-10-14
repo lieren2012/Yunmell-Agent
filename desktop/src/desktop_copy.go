@@ -26,10 +26,10 @@ const (
 
 var desktopCopy = map[Locale]map[string]string{
 	LocaleEN: {
-		copyStatusConnecting:       "Connecting to Yunmell-Agent…",
+		copyStatusConnecting:       "Connecting to Yunmell Agent…",
 		copyStatusCheckingRuntime:  "Checking the runtime…",
-		copyStatusStartingService:  "Starting the Yunmell-Agent service…",
-		copyStatusReady:            "Yunmell-Agent is ready",
+		copyStatusStartingService:  "Starting the Yunmell Agent service…",
+		copyStatusReady:             "Yunmell Agent is ready",
 		copyStatusUsingRuntime:     "Using the existing runtime…",
 		copyStatusBackupDatabase:   "Desktop update %s found. Backing up the database…",
 		copyStatusInstallingUpdate: "Installing the bundled desktop update…",
@@ -42,9 +42,9 @@ var desktopCopy = map[Locale]map[string]string{
 		copyWaitNMinutes:           "%d minutes",
 		copyWait1Second:            "1 second",
 		copyWaitNSeconds:           "%d seconds",
-		copyHealthNotReady5xx:      "Yunmell-Agent did not become ready within %s (%s). The service responded but is not ready yet. Try again, or check the terminal logs.",
-		copyHealthNotReadyConnect:  "Yunmell-Agent did not become ready within %s (%s). Could not connect — make sure Yunmell-Agent is running.",
-		copyHealthNotReady:         "Yunmell-Agent did not become ready within %s (%s). Make sure Yunmell-Agent is running at this address, or check the terminal logs.",
+		copyHealthNotReady5xx:      "Yunmell Agent did not become ready within %s (%s). The service responded but is not ready yet. Try again, or check the terminal logs.",
+		copyHealthNotReadyConnect:  "Yunmell Agent did not become ready within %s (%s). Could not connect — make sure Yunmell Agent is running.",
+		copyHealthNotReady:         "Yunmell Agent did not become ready within %s (%s). Make sure Yunmell Agent is running at this address, or check the terminal logs.",
 	},
 	LocaleZH: {
 		copyStatusConnecting:       "正在连接云迈智能体…",

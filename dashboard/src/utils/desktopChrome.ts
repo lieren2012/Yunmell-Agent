@@ -88,6 +88,13 @@ export function emitDesktopWindowAction(
   return true;
 }
 
+export function showDesktopClientUpdates(): boolean {
+  const invoke = (window as DesktopWindow)._wails?.invoke;
+  if (typeof invoke !== "function") return false;
+  invoke("wails:event:emit:desktop:show-updates");
+  return true;
+}
+
 function dragEventElement(target: EventTarget | null): Element | null {
   if (target instanceof Element) return target;
   if (target instanceof Node) return target.parentElement;

@@ -1,15 +1,15 @@
 {
   "fixed": {
-    "file_version": "1.0.5"
+    "file_version": "1.0.7"
   },
   "info": {
     "0000": {
-      "ProductVersion": "1.0.5",
+      "ProductVersion": "1.0.7",
       "CompanyName": "Yunmell",
-      "FileDescription": "Yunmell-Agent desktop",
+      "FileDescription": "云迈智能体桌面客户端",
       "LegalCopyright": "Copyright © 2026",
-      "ProductName": "Yunmell-Agent",
-      "Comments": "Yunmell-Agent desktop shell"
+      "ProductName": "云迈智能体",
+      "Comments": "云迈智能体桌面客户端"
     }
   }
 }

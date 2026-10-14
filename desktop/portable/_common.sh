@@ -266,6 +266,10 @@ write_green_overrides() {
         # 46.0.3 still publishes cp*-abi3-macosx_10_9_universal2 (covers x86_64).
         # cryptography>=47 only ships macos arm64 wheels → sdist + brew openssl.
         echo "cryptography==46.0.3"
+        # 26.1.0 currently falls back to an x86_64 macOS source wheel that
+        # uv rejects for the portable CPython target.  25.1.0 ships the
+        # universal2 abi3 wheel needed by the Intel package.
+        echo "argon2-cffi-bindings==25.1.0"
       } > "$out"
       echo "$out"
       ;;

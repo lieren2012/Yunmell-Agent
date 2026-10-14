@@ -64,6 +64,15 @@ class LoginBody(BaseModel):
     username: str
     password: str
     captcha_token: str | None = Field(default=None, max_length=4096)
+    enterprise_slug: str | None = Field(default=None, max_length=120)
+
+
+class EnterpriseRegistrationBody(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=8, max_length=200)
+    display_name: str | None = Field(default=None, max_length=128)
+    email: str | None = Field(default=None, max_length=254)
+    supplement: str | None = Field(default=None, max_length=2000)
 
 
 class CaptchaPublicResponse(BaseModel):
@@ -192,10 +201,34 @@ async def login(
     user = await server.user_manager.authenticate(body.username, body.password)
     if user is None:
         local_row = _local_row(server, body.username)
+        if (
+            local_row is not None
+            and local_row.approval_status != "approved"
+            and local_row.password_hash
+        ):
+            from octop.infra.users.password import verify_password
+
+            if verify_password(body.password, local_row.password_hash):
+                status = local_row.approval_status
+                labels = {
+                    "pending": "注册申请正在等待管理员审核",
+                    "rejected": "注册申请已被驳回，请联系管理员",
+                    "needs_info": "注册申请需要补充资料，请联系管理员",
+                }
+                raise OctopError(
+                    ErrorCode.AUTH_FAILED,
+                    labels.get(status, "账号尚未获准登录"),
+                    details={"registration_status": status},
+                    status=401,
+                )
         if _directory_may_own(local_row):
             user = await _authenticate_ldap(server, body.username, body.password, client_ip)
     if user is None:
         raise OctopError(ErrorCode.AUTH_FAILED, "invalid credentials")
+    if body.enterprise_slug and not _user_belongs_to_enterprise(
+        server, user.id, body.enterprise_slug
+    ):
+        raise OctopError(ErrorCode.AUTH_FAILED, "invalid enterprise credentials")
     secret = server.services.secret_repo.get("jwt")
     ttl = server.services.config.access_token_ttl_seconds
     token = sign_token(secret, sub=user.id, uname=user.username, role=user.role, ttl_seconds=ttl)
@@ -205,6 +238,89 @@ async def login(
         "expires_in": ttl,
         "user": _user_json(user, locale=user.locale),
     }
+
+
+def _user_belongs_to_enterprise(server: Any, user_id: int, login_slug: str) -> bool:
+    organization = server.services.enterprise_repo.get_organization_by_slug(login_slug)
+    if organization is None:
+        return False
+    return organization.organization_id in server.services.enterprise_repo.member_organization_ids(
+        user_id
+    )
+
+
+@router.get("/enterprises/{login_slug}", summary="Get public enterprise login info")
+async def enterprise_login_info(
+    login_slug: str, server: Any = Depends(get_server)
+) -> dict[str, Any]:
+    organization = server.services.enterprise_repo.get_organization_by_slug(login_slug)
+    if organization is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "enterprise not found")
+    return {
+        "organization_id": organization.organization_id,
+        "name": organization.name,
+        "login_slug": organization.login_slug,
+    }
+
+
+@router.post(
+    "/enterprises/{login_slug}/register", status_code=202, summary="Submit enterprise registration"
+)
+async def enterprise_register(
+    login_slug: str,
+    body: EnterpriseRegistrationBody,
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    organization = server.services.enterprise_repo.get_organization_by_slug(login_slug)
+    if organization is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "enterprise not found")
+    user = await server.user_manager.create(
+        username=body.username,
+        password=body.password,
+        role="user",
+        display_name=body.display_name,
+        email=body.email,
+        pending_approval=True,
+    )
+    application = server.services.enterprise_repo.create_registration_application(
+        organization_id=organization.organization_id,
+        user_id=user.id,
+        supplement=body.supplement,
+    )
+    if not organization.registration_review_required:
+        application = server.services.enterprise_repo.review_registration_application(
+            application.application_id,
+            status="approved",
+            reviewer_id=None,
+            note="auto-approved by enterprise policy",
+        )
+        server.services.enterprise_repo.upsert_member(
+            organization.organization_id, user.id, None, "member"
+        )
+    server.services.audit_repo.write(
+        actor=body.username,
+        action="enterprise.registration.submit",
+        target=application.application_id,
+        payload=f"organization_id={organization.organization_id}",
+    )
+    return {
+        "application_id": application.application_id,
+        "status": application.status,
+        "enterprise": organization.login_slug,
+    }
+
+
+@router.post("/enterprises/{login_slug}/login", summary="Sign in through an enterprise address")
+async def enterprise_login(
+    login_slug: str,
+    body: LoginBody,
+    request: Request,
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    organization = server.services.enterprise_repo.get_organization_by_slug(login_slug)
+    if organization is None:
+        raise OctopError(ErrorCode.AUTH_FAILED, "invalid enterprise credentials")
+    return await login(body.model_copy(update={"enterprise_slug": login_slug}), request, server)
 
 
 @router.post("/logout", status_code=204, summary="Sign out")

@@ -556,7 +556,9 @@ export default function CreateFromExpertDrawer({
     models,
     t("experts.defaultModelAuto"),
   );
-  const createBlocked = submitting || hasNoModels;
+  // Model management is optional for members: an empty model list means the
+  // service will resolve its enterprise default model at runtime.
+  const createBlocked = submitting;
 
   const { configFiles, skillGroups, subagentFiles } =
     groupExpertFiles(fileContents);
@@ -639,14 +641,10 @@ export default function CreateFromExpertDrawer({
     >
       {hasNoModels && (
         <Alert
-          type="warning"
+          type="info"
           showIcon
           message={t("experts.noModelsWarning")}
-          action={
-            <a href="/admin/models" style={{ whiteSpace: "nowrap" }}>
-              {t("experts.goToAdmin")}
-            </a>
-          }
+          description="创建后将自动继承企业默认模型。"
           style={{ marginBottom: 16 }}
         />
       )}
