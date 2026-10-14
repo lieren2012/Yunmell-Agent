@@ -565,7 +565,10 @@
     "localModelEnableFailed": "启用本地模型失败",
     "localModelBusy": "本地模型正在准备，请稍候…",
     "personalOcrReady": "本地 RapidOCR 已就绪，可识别图片和扫描 PDF。",
-    "personalOcrOptional": "图片和扫描 PDF 的本地 RapidOCR 可按需安装；文本和普通 PDF 不受影响。"
+    "personalOcrOptional": "图片和扫描 PDF 的本地 RapidOCR 可按需安装；文本和普通 PDF 不受影响。",
+    "installPersonalOcr": "安装本地 OCR",
+    "personalOcrInstalled": "本地 OCR 已就绪",
+    "personalOcrInstallFailed": "本地 OCR 安装失败"
   },
   "setupWizard": {
     "title": "设置向导",

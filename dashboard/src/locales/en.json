@@ -565,7 +565,10 @@
     "localModelEnableFailed": "Failed to enable local model",
     "localModelBusy": "The local model is being prepared. Please wait…",
     "personalOcrReady": "Local RapidOCR is ready for images and scanned PDFs.",
-    "personalOcrOptional": "Local RapidOCR for images and scanned PDFs can be installed when needed; text and normal PDFs are unaffected."
+    "personalOcrOptional": "Local RapidOCR for images and scanned PDFs can be installed when needed; text and normal PDFs are unaffected.",
+    "installPersonalOcr": "Install local OCR",
+    "personalOcrInstalled": "Local OCR is ready",
+    "personalOcrInstallFailed": "Local OCR installation failed"
   },
   "setupWizard": {
     "title": "Setup Wizard",
