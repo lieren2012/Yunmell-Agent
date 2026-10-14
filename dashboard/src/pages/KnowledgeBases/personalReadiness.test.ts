@@ -83,4 +83,34 @@ describe("resolvePersonalReadiness", () => {
     );
     expect(result.usable).toBe(true);
   });
+
+  it("reports personal OCR from local dependency checks even when enterprise OCR is off", () => {
+    const result = resolvePersonalReadiness(
+      capability({
+        ocr: {
+          enabled: true,
+          backend: "onnx",
+          model: "rapidocr",
+          provider_id: "",
+          prerequisites_ok: true,
+          usable: false,
+          checks: { deps_available: false, provider_ready: false },
+        },
+        personal_local: {
+          selected_model: "bge-small",
+          checks: { model_downloaded: true, deps_available: true },
+          usable: true,
+          ocr: {
+            enabled: true,
+            backend: "onnx",
+            deps_available: true,
+            checks: { deps_available: true, provider_ready: false },
+            usable: true,
+          },
+        },
+      }),
+    );
+    expect(result.usable).toBe(true);
+    expect(result.ocrUsable).toBe(true);
+  });
 });
