@@ -110,6 +110,24 @@ class DesktopIdentityBridge:
                 ErrorCode.AUTH_FAILED, "服务地址已更换，请在当前企业重新登录", status=401
             )
 
+    def revoke_authority(self, authority: str) -> None:
+        """Delete encrypted sessions/snapshots bound to an old service URL."""
+        if not authority:
+            return
+        services = self.server.services
+        local_ids = DeploymentRepo(services.db).local_ids_for_authority(authority)
+        if not local_ids:
+            return
+        with services.db.transaction() as connection:
+            for local_id in local_ids:
+                connection.execute(
+                    "DELETE FROM secrets WHERE k IN (?, ?)",
+                    (
+                        f"yunmell.remote-session:{local_id}",
+                        f"{IDENTITY_SNAPSHOT_PREFIX}{local_id}",
+                    ),
+                )
+
     def session(self, local_user_id: int) -> dict[str, Any]:
         services = self.server.services
         authority = DeploymentRepo(services.db).identity_authority(local_user_id)

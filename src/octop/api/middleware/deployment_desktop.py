@@ -118,6 +118,8 @@ async def connection(request: Request, server: Any) -> Response:
         ) from None
     previous = management_address()
     save_address(address)
+    if previous and previous != address:
+        bridge(server).revoke_authority(previous)
     response = JSONResponse({"desktop": True, "address": address, "name": info["name"]})
     if previous != address:
         response.delete_cookie(COOKIE, path="/api/auth/deployment")

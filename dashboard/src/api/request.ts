@@ -217,6 +217,7 @@ export function clearAuthToken() {
   sessionStorage.removeItem(AUTH_TOKEN_KEY);
   sessionStorage.removeItem(AUTH_REMEMBER_PREF_KEY);
   localStorage.removeItem("octop:active-agent");
+  localStorage.removeItem("octop:cached-user");
   setActiveAgentId(null);
   notifyAuthTokenChanged(previous, "", "clear");
 }

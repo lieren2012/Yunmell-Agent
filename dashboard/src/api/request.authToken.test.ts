@@ -61,9 +61,11 @@ describe("auth token remember / session-only", () => {
 
   it("clearAuthToken removes both stores", () => {
     mod.setAuthToken("tok", false);
+    localStorage.setItem("octop:cached-user", JSON.stringify({ id: 7 }));
     mod.clearAuthToken();
     expect(mod.getAuthToken()).toBe("");
     expect(sessionStorage.getItem("auth_token")).toBeNull();
+    expect(localStorage.getItem("octop:cached-user")).toBeNull();
   });
 
   it("notifies the current document when the token changes", () => {

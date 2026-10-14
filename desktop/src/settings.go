@@ -36,6 +36,11 @@ type Settings struct {
 	IncludePrerelease bool   `json:"includePrerelease,omitempty"`
 }
 
+const (
+	defaultControlPlaneURL       = "https://agent-oc.yun.cab"
+	legacyDefaultControlPlaneURL = "https://6602-b3-agent.yun.cab"
+)
+
 func defaultSettings() Settings {
 	return Settings{
 		Locale:          LocaleEN,
@@ -43,7 +48,7 @@ func defaultSettings() Settings {
 		MinimizeToTray:  true,
 		PreventSleep:    false,
 		Port:            8088,
-		ControlPlaneURL: "https://6602-b3-agent.yun.cab",
+		ControlPlaneURL: defaultControlPlaneURL,
 	}
 }
 
@@ -78,6 +83,14 @@ func loadSettings() Settings {
 		return s
 	}
 	_ = json.Unmarshal(data, &s)
+	// b15 shipped with the old public control-plane default. Treat that exact
+	// generated value as a default migration while preserving every custom URL.
+	if s.ControlPlaneURL == legacyDefaultControlPlaneURL {
+		s.ControlPlaneURL = defaultControlPlaneURL
+		if migrated, err := json.MarshalIndent(s, "", "  "); err == nil {
+			_ = os.WriteFile(settingsPath(), migrated, 0o644)
+		}
+	}
 	var legacy struct {
 		PreventSleepMac bool `json:"preventSleepMac"`
 	}

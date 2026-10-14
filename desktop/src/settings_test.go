@@ -33,8 +33,25 @@ func TestNormalizeControlPlaneURL(t *testing.T) {
 }
 
 func TestDefaultSettingsUsePublicHTTPSControlPlane(t *testing.T) {
-	if got := defaultSettings().ControlPlaneURL; got != "https://6602-b3-agent.yun.cab" {
+	if got := defaultSettings().ControlPlaneURL; got != "https://agent-oc.yun.cab" {
 		t.Fatalf("default control plane URL = %q", got)
+	}
+}
+
+func TestLoadSettingsMigratesLegacyDefaultButPreservesCustomAddress(t *testing.T) {
+	temp := t.TempDir()
+	t.Setenv("OCTOP_HOME", temp)
+	if err := os.WriteFile(filepath.Join(temp, "desktop-settings.json"), []byte(`{"controlPlaneUrl":"https://6602-b3-agent.yun.cab"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadSettings().ControlPlaneURL; got != "https://agent-oc.yun.cab" {
+		t.Fatalf("migrated control plane URL = %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(temp, "desktop-settings.json"), []byte(`{"controlPlaneUrl":"https://custom.example.com"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadSettings().ControlPlaneURL; got != "https://custom.example.com" {
+		t.Fatalf("custom control plane URL = %q", got)
 	}
 }
 

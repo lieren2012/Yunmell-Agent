@@ -141,6 +141,14 @@ class DeploymentRepo:
             ).fetchone()
         return str(row["authority"]) if row else None
 
+    def local_ids_for_authority(self, authority: str) -> list[int]:
+        with self.db.connect() as connection:
+            rows = connection.execute(
+                "SELECT local_user_id FROM desktop_identities WHERE authority = ?",
+                (authority,),
+            ).fetchall()
+        return [int(row["local_user_id"]) for row in rows]
+
     def add_identity(self, authority: str, remote_user_id: int, local_user_id: int) -> None:
         with self.db.transaction() as connection:
             connection.execute(

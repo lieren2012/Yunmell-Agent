@@ -610,8 +610,8 @@
           title: "云迈智能体设置",
           subtitle: "桌面端偏好",
           controlPlane: "控制面地址",
-          controlPlaneH: "填写企业管理地址；保存后点击重试启动，本地数据保留",
-          controlPlanePlaceholder: "留空 = 本机",
+          controlPlaneH: "已预填云迈企业服务地址；可修改并保存，保存后点击重试启动，本地数据保留",
+          controlPlanePlaceholder: "https://agent-oc.yun.cab",
           lang: "语言",
           langH: "选择偏好语言 / Choose your preferred language",
           auto: "开机启动",
@@ -633,8 +633,8 @@
           title: "云迈智能体设置",
           subtitle: "Desktop preferences",
           controlPlane: "Control plane URL",
-          controlPlaneH: "Set the management address, then retry startup. Local data is preserved.",
-          controlPlanePlaceholder: "Empty = local",
+          controlPlaneH: "The Yunmell enterprise address is prefilled. You can change and save it, then retry startup; local data is preserved.",
+          controlPlanePlaceholder: "https://agent-oc.yun.cab",
           lang: "Language",
           langH: "Choose your preferred language",
           auto: "Launch at login",
@@ -805,7 +805,7 @@
         document.getElementById("settings-panel").classList.remove("hidden");
         document.getElementById("locale").value = locale;
         document.getElementById("control-plane-url").value =
-          s.controlPlaneUrl || "";
+          s.controlPlaneUrl || "https://agent-oc.yun.cab";
         document.getElementById("autostart").checked = !!s.autostart;
         document.getElementById("tray").checked = s.minimizeToTray !== false;
         document.getElementById("sleep").checked = !!s.preventSleep;
