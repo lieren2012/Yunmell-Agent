@@ -243,7 +243,7 @@ def _progress_tqdm(on_progress: SnapshotProgressFn) -> type[Any] | None:
         from tqdm.auto import tqdm as Tqdm
     except ImportError:
 
-        class ProgressTqdm:
+        class FallbackProgressTqdm:
             """Small HuggingFace-compatible fallback when tqdm is unavailable."""
 
             def __init__(self, total: int | None = None, desc: str = "", **_: Any) -> None:
@@ -261,13 +261,13 @@ def _progress_tqdm(on_progress: SnapshotProgressFn) -> type[Any] | None:
             def close(self) -> None:
                 return None
 
-            def __enter__(self) -> ProgressTqdm:
+            def __enter__(self) -> FallbackProgressTqdm:
                 return self
 
             def __exit__(self, *_: Any) -> None:
                 self.close()
 
-        return ProgressTqdm
+        return FallbackProgressTqdm
 
     class ProgressTqdm(Tqdm):  # type: ignore[misc]
         def update(self, n: float | None = 1) -> Any:
