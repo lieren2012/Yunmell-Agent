@@ -1,7 +1,7 @@
 {
     ".url": {
         "octop.Application": {
-            "title": "OCTOP",
+            "title": "云迈智能体",
             "icon": "images/icon_{0}.png",
             "type": "iframe",
             "protocol": "http",

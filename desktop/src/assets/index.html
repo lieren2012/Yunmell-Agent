@@ -714,13 +714,12 @@
         return Call.ByName("main.App." + name, ...args);
       }
 
-      const MASCOT_IMAGES = [
-        "/octop-mascot-peek.webp",
-        "/octop-mascot-type.webp",
-      ];
+      // Keep the desktop startup mark consistent with the Yunmell app/window icon.
+      const MASCOT_IMAGES = ["/yunmell-icon.png"];
       const mascotEl = document.getElementById("mascot");
       let mascotSrc = MASCOT_IMAGES[0];
       function pickMascot(current) {
+        if (MASCOT_IMAGES.length < 2) return current;
         let next = current;
         while (next === current) {
           next = MASCOT_IMAGES[Math.floor(Math.random() * MASCOT_IMAGES.length)];

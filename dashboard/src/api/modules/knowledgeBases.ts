@@ -310,13 +310,10 @@ export const knowledgeBasesApi = {
       ready: boolean;
       personal_model?: string;
       reindex_enqueued?: number;
-    }>(
-      "/knowledge-bases/onnx-activate",
-      {
-        method: "POST",
-        body: JSON.stringify({ model }),
-      },
-    ),
+    }>("/knowledge-bases/onnx-activate", {
+      method: "POST",
+      body: JSON.stringify({ model }),
+    }),
 
   deletePersonalOnnx: (model: string) =>
     request<{

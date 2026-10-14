@@ -423,6 +423,9 @@ export default function KnowledgeBasesPage() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadProgressLabel, setDownloadProgressLabel] = useState("");
   const [downloadProgressModel, setDownloadProgressModel] = useState("");
+  const [downloadProgressError, setDownloadProgressError] = useState<
+    string | null
+  >(null);
   const onnxDownloadTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const [remoteProviders, setRemoteProviders] = useState<
     {
@@ -995,7 +998,10 @@ export default function KnowledgeBasesPage() {
     async (modelId: string, status: string, error?: string | null) => {
       stopOnnxDownloadWatch();
       setOnnxDownloading(false);
-      setDownloadProgressOpen(false);
+      setDownloadProgressError(
+        status === "failed" ? error || t("models.localDownloadFailed") : null,
+      );
+      setDownloadProgressOpen(status === "failed");
       await loadEmbeddingOptions(onnxExpandedRef.current);
       if (status === "done") {
         try {
@@ -1349,6 +1355,23 @@ export default function KnowledgeBasesPage() {
   };
 
   const saveFeature = async (confirmed = false) => {
+    if (!canConfigureKb) {
+      const selectedModel = featureModel?.trim();
+      if (!selectedModel) return;
+      const currentModel = personalReadiness.model || "";
+      if (!confirmed && currentModel && currentModel !== selectedModel) {
+        modal.confirm({
+          title: t("knowledgeBases.personalModelChangeConfirmTitle"),
+          content: t("knowledgeBases.personalModelChangeConfirmDescription"),
+          okText: t("common.confirm"),
+          cancelText: t("common.cancel"),
+          onOk: () => void saveFeature(true),
+        });
+        return;
+      }
+      await activatePersonalOnnx(selectedModel);
+      return;
+    }
     if (!featureEnabledDraft) {
       setFeatureSaving(true);
       try {
@@ -1429,11 +1452,19 @@ export default function KnowledgeBasesPage() {
   };
 
   const openSettings = () => {
-    const selectedModel = capability?.selected_model || undefined;
-    const selectedBackend = capability?.backend ?? "onnx";
+    const selectedModel =
+      (canConfigureKb
+        ? capability?.selected_model
+        : capability?.personal_local?.model || personalReadiness.model) ||
+      undefined;
+    const selectedBackend = canConfigureKb
+      ? capability?.backend ?? "onnx"
+      : "onnx";
     onnxExpandedRef.current = false;
     setOnnxExpanded(false);
-    setFeatureEnabledDraft(Boolean(capability?.feature_enabled));
+    setFeatureEnabledDraft(
+      canConfigureKb ? Boolean(capability?.feature_enabled) : true,
+    );
     setFeatureBackend(selectedBackend);
     setFeatureModel(selectedModel);
     setFeatureProviderId(capability?.provider_id || undefined);
@@ -1452,7 +1483,7 @@ export default function KnowledgeBasesPage() {
         await loadEmbeddingOptions(true);
       }
     })();
-    void loadOcrOptions();
+    if (canConfigureKb) void loadOcrOptions();
     void knowledgeBasesApi.getOnnxDownloadStatus().then((state) => {
       if (state.status === "downloading" || state.status === "loading") {
         const modelId = state.model_name;
@@ -1480,6 +1511,7 @@ export default function KnowledgeBasesPage() {
         setOnnxDownloading(true);
         setDownloadProgressModel(modelId);
         setDownloadProgress(0);
+        setDownloadProgressError(null);
         setDownloadProgressLabel(t("models.localDownloadPreparing"));
         setDownloadProgressOpen(true);
         try {
@@ -1487,7 +1519,9 @@ export default function KnowledgeBasesPage() {
           watchOnnxDownloadStatus(modelId);
         } catch (error) {
           setOnnxDownloading(false);
-          setDownloadProgressOpen(false);
+          setDownloadProgressError(
+            error instanceof Error ? error.message : String(error),
+          );
           message.error(
             apiErrorMessage(error, t("models.onnxDownloadFailed"), t),
           );
@@ -1502,10 +1536,17 @@ export default function KnowledgeBasesPage() {
     setDownloadProgressLabel(t("knowledgeBases.localModelEnabling"));
     setDownloadProgressOpen(true);
     try {
-      await knowledgeBasesApi.activateOnnx(modelId);
+      const result = await knowledgeBasesApi.activateOnnx(modelId);
       await loadCapability();
       setDownloadProgressOpen(false);
       message.success(t("knowledgeBases.localModelEnabled"));
+      if ((result.reindex_enqueued ?? 0) > 0) {
+        message.info(
+          t("knowledgeBases.personalReindexStarted", {
+            count: result.reindex_enqueued,
+          }),
+        );
+      }
     } catch (error) {
       setDownloadProgressOpen(false);
       message.error(
@@ -1514,6 +1555,33 @@ export default function KnowledgeBasesPage() {
     } finally {
       setOnnxDownloading(false);
     }
+  };
+
+  const deletePersonalModel = (modelId: string) => {
+    modal.confirm({
+      title: t("knowledgeBases.personalModelDeleteTitle"),
+      content: t("knowledgeBases.personalModelDeleteDescription", {
+        model: modelId,
+      }),
+      okText: t("common.delete"),
+      cancelText: t("common.cancel"),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await knowledgeBasesApi.deletePersonalOnnx(modelId);
+          await loadEmbeddingOptions(onnxExpandedRef.current);
+          message.success(t("knowledgeBases.personalModelDeleted"));
+        } catch (error) {
+          message.error(
+            apiErrorMessage(
+              error,
+              t("knowledgeBases.personalModelDeleteFailed"),
+              t,
+            ),
+          );
+        }
+      },
+    });
   };
 
   const installPersonalOcr = async () => {
@@ -1538,6 +1606,23 @@ export default function KnowledgeBasesPage() {
   const dismissDownloadProgressToBackground = () => {
     setDownloadProgressOpen(false);
     message.info(t("models.localDownloadBackground"));
+  };
+
+  const retryOnnxDownload = async () => {
+    const modelId = downloadProgressModel;
+    if (!modelId) return;
+    setOnnxDownloading(true);
+    setDownloadProgressError(null);
+    setDownloadProgress(0);
+    try {
+      await knowledgeBasesApi.downloadOnnx(modelId);
+      watchOnnxDownloadStatus(modelId);
+    } catch (error) {
+      setOnnxDownloading(false);
+      setDownloadProgressError(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   };
 
   const uploadDocuments = async (files: FileList | File[] | null) => {
@@ -2153,7 +2238,7 @@ export default function KnowledgeBasesPage() {
       subtitle={t("knowledgeBases.subtitle")}
       fill
       actions={
-        canConfigureKb ? (
+        canConfigureKb || canUseKnowledge ? (
           <Button icon={<Settings size={15} />} onClick={openSettings}>
             {t("knowledgeBases.settingsTitle")}
           </Button>
@@ -3501,23 +3586,32 @@ export default function KnowledgeBasesPage() {
           </div>
         }
       >
-        <div className={styles.formOptions}>
-          <div className={styles.formOptionRow}>
-            <div className={styles.formOptionCopy}>
-              <span className={styles.switchLabel}>
-                {t("knowledgeBases.settingsOpen")}
-              </span>
-              <span className={styles.formOptionHint}>
-                {t("knowledgeBases.settingsLead")}
-              </span>
+        {canConfigureKb ? (
+          <div className={styles.formOptions}>
+            <div className={styles.formOptionRow}>
+              <div className={styles.formOptionCopy}>
+                <span className={styles.switchLabel}>
+                  {t("knowledgeBases.settingsOpen")}
+                </span>
+                <span className={styles.formOptionHint}>
+                  {t("knowledgeBases.settingsLead")}
+                </span>
+              </div>
+              <Switch
+                size="small"
+                checked={featureEnabledDraft}
+                onChange={setFeatureEnabledDraft}
+              />
             </div>
-            <Switch
-              size="small"
-              checked={featureEnabledDraft}
-              onChange={setFeatureEnabledDraft}
-            />
           </div>
-        </div>
+        ) : (
+          <Alert
+            type="info"
+            showIcon
+            message={t("knowledgeBases.personalModelSettingsTitle")}
+            description={t("knowledgeBases.personalModelSettingsDescription")}
+          />
+        )}
 
         {featureEnabledDraft ? (
           <Spin spinning={featureOptionsLoading}>
@@ -3525,20 +3619,22 @@ export default function KnowledgeBasesPage() {
               <div className={styles.settingsFieldLabel}>
                 {t("knowledgeBases.selectModel")}
               </div>
-              <Radio.Group
-                className={styles.featureBackend}
-                value={featureBackend}
-                onChange={(event) => {
-                  setFeatureBackend(event.target.value);
-                  setFeatureModel(undefined);
-                }}
-              >
-                <Radio value="onnx">{t("knowledgeBases.localOnnx")}</Radio>
-                <Radio value="remote">
-                  {t("knowledgeBases.remoteEmbedding")}
-                </Radio>
-              </Radio.Group>
-              {featureBackend === "remote" ? (
+              {canConfigureKb ? (
+                <Radio.Group
+                  className={styles.featureBackend}
+                  value={featureBackend}
+                  onChange={(event) => {
+                    setFeatureBackend(event.target.value);
+                    setFeatureModel(undefined);
+                  }}
+                >
+                  <Radio value="onnx">{t("knowledgeBases.localOnnx")}</Radio>
+                  <Radio value="remote">
+                    {t("knowledgeBases.remoteEmbedding")}
+                  </Radio>
+                </Radio.Group>
+              ) : null}
+              {featureBackend === "remote" && canConfigureKb ? (
                 <div className={styles.featureFields}>
                   <Select
                     value={featureProviderId}
@@ -3629,21 +3725,50 @@ export default function KnowledgeBasesPage() {
                               : ` · ${t("knowledgeBases.notDownloaded")}`}
                           </span>
                         </div>
-                        {model.downloaded ? null : (
-                          <Button
-                            size="small"
-                            icon={<Download size={14} />}
-                            loading={downloading}
-                            disabled={onnxDownloading && !downloading}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setFeatureModel(model.id);
-                              void startOnnxDownload(model.id);
-                            }}
-                          >
-                            {t("knowledgeBases.downloadModel")}
-                          </Button>
-                        )}
+                        <div
+                          className={styles.modelActions}
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                          }}
+                        >
+                          {model.downloaded ? null : (
+                            <Button
+                              size="small"
+                              icon={<Download size={14} />}
+                              loading={downloading}
+                              disabled={onnxDownloading && !downloading}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setFeatureModel(model.id);
+                                void startOnnxDownload(model.id);
+                              }}
+                            >
+                              {t("knowledgeBases.downloadModel")}
+                            </Button>
+                          )}
+                          {!canConfigureKb && model.downloaded ? (
+                            <Button
+                              size="small"
+                              danger
+                              disabled={model.id === personalReadiness.model}
+                              title={
+                                model.id === personalReadiness.model
+                                  ? t(
+                                      "knowledgeBases.personalModelDeleteActive",
+                                    )
+                                  : undefined
+                              }
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                deletePersonalModel(model.id);
+                              }}
+                            >
+                              {t("common.delete")}
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
                     );
                   })}
@@ -3655,7 +3780,7 @@ export default function KnowledgeBasesPage() {
                       {t("knowledgeBases.noModels")}
                     </Typography.Text>
                   ) : null}
-                  {catalog.length > 0 && !onnxExpanded ? (
+                  {canConfigureKb && catalog.length > 0 && !onnxExpanded ? (
                     <Button
                       type="link"
                       loading={onnxExpanding}
@@ -3671,7 +3796,11 @@ export default function KnowledgeBasesPage() {
                 <div className={styles.onnxReadiness}>
                   <ReadinessRow
                     label={t("knowledgeBases.checkRuntime")}
-                    ok={Boolean(capability?.checks.deps_available)}
+                    ok={
+                      canConfigureKb
+                        ? Boolean(capability?.checks.deps_available)
+                        : personalReadiness.depsAvailable
+                    }
                     okText={t("knowledgeBases.checkInstalled")}
                     failText={t("knowledgeBases.checkRuntimeMissing")}
                   />
@@ -3822,15 +3951,36 @@ export default function KnowledgeBasesPage() {
         maskClosable
         destroyOnHidden={false}
         footer={
-          <Button onClick={dismissDownloadProgressToBackground}>
-            {t("models.localDownloadContinueBackground")}
-          </Button>
+          downloadProgressError ? (
+            <>
+              <Button onClick={dismissDownloadProgressToBackground}>
+                {t("common.cancel")}
+              </Button>
+              <Button
+                type="primary"
+                onClick={() => void retryOnnxDownload()}
+                loading={onnxDownloading}
+              >
+                {t("common.retry")}
+              </Button>
+            </>
+          ) : (
+            <Button onClick={dismissDownloadProgressToBackground}>
+              {t("models.localDownloadContinueBackground")}
+            </Button>
+          )
         }
       >
         <div className={styles.downloadProgressLabel}>
           {downloadProgressLabel || downloadProgressModel}
         </div>
-        <Progress percent={downloadProgress} status="active" />
+        <Progress
+          percent={downloadProgress}
+          status={downloadProgressError ? "exception" : "active"}
+        />
+        {downloadProgressError ? (
+          <Alert type="error" showIcon message={downloadProgressError} />
+        ) : null}
         <Typography.Text type="secondary" className={styles.settingsHint}>
           {t("models.localDownloadBackgroundHint")}
         </Typography.Text>
