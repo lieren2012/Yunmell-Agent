@@ -22,10 +22,16 @@ def test_split_tag_accepts_with_or_without_v() -> None:
     assert mod.split_tag("v0.9.31") == ("v0.9.31", "0.9.31")
 
 
+def test_download_links_use_yunmell_agent_repository_by_default() -> None:
+    mod = _load()
+    assert mod.GITHUB_REPO == "lieren2012/Yunmell-Agent"
+    assert mod.DOWNLOAD_BASE == "https://github.com/lieren2012/Yunmell-Agent/releases/download"
+
+
 def test_render_download_section_matches_github_asset_names() -> None:
     mod = _load()
     body = mod.render_download_section("0.9.31")
-    base = "https://github.com/TencentCloud/Octop/releases/download/v0.9.31"
+    base = "https://github.com/lieren2012/Yunmell-Agent/releases/download/v0.9.31"
     assert f"{base}/Octop-desktop-windows-amd64-0.9.31.exe" in body
     assert f"{base}/Octop-desktop-windows-arm64-0.9.31.exe" in body
     assert f"{base}/Octop-portable-windows-amd64-0.9.31.zip" in body
