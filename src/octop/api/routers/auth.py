@@ -60,6 +60,19 @@ def me_payload(user: Any, server: Any) -> dict[str, Any]:
     return payload
 
 
+def _schedule_default_agent_recovery(server: Any, user_id: int) -> None:
+    """Restore the local user's bundled expert without delaying auth."""
+    runtime = getattr(server, "app_runtime", None)
+    registry = getattr(runtime, "agent_registry", None)
+    recover = getattr(registry, "ensure_default_agent_running", None)
+    if not callable(recover):
+        return
+    asyncio.create_task(
+        recover(user_id),
+        name=f"restore-default-expert-{user_id}",
+    )
+
+
 class LoginBody(BaseModel):
     username: str
     password: str
@@ -229,6 +242,7 @@ async def login(
         server, user.id, body.enterprise_slug
     ):
         raise OctopError(ErrorCode.AUTH_FAILED, "invalid enterprise credentials")
+    _schedule_default_agent_recovery(server, user.id)
     secret = server.services.secret_repo.get("jwt")
     ttl = server.services.config.access_token_ttl_seconds
     token = sign_token(secret, sub=user.id, uname=user.username, role=user.role, ttl_seconds=ttl)
@@ -335,6 +349,7 @@ async def me(
     user: Any = Depends(current_user), server: Any = Depends(get_server)
 ) -> dict[str, Any]:
     """Return the authenticated user's id, username, role, display name, and locale."""
+    _schedule_default_agent_recovery(server, user.id)
     return me_payload(user, server)
 
 

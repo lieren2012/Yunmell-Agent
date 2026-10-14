@@ -64,6 +64,7 @@ async def test_bootstrap_creates_general_assistant(catalog: ExpertCatalog) -> No
     assert spec.user_id == 3
     assert spec.agent_id is None
     assert spec.template_name == DEFAULT_EXPERT_ID
+    assert spec.config["is_default"] is True
     assert spec.config["backend"] == default_home_local_backend()
     assert spec.config["backend"]["root_dir"] == host_fs_tree_root()
     assert registry.create.await_args.kwargs["defer_bootstrap"] is True

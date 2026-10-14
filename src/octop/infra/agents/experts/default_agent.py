@@ -78,7 +78,12 @@ async def bootstrap_default_agent(
         user_id=user_id,
         agent_id=agent_id,
         locale=loc,
-        config_extra={"backend": default_home_local_backend(root_dir=root_dir)},
+        # Keep a durable marker so recovery can distinguish this bundled
+        # default from a user-created copy of the same expert template.
+        config_extra={
+            "backend": default_home_local_backend(root_dir=root_dir),
+            "is_default": True,
+        },
     )
     return await registry.create(spec, defer_bootstrap=True)
 

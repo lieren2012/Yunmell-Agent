@@ -410,6 +410,7 @@ class AgentManager:
         self._reload_dirty: set[str] = set()
         self._reload_worker_running: dict[str, bool] = {}
         self._bootstrap_graph_refresh_pending: set[str] = set()
+        self._default_recovery_users: set[int] = set()
         # Chat user id used to resolve connectors when agent.user_id is NULL (shared agents).
         self._connector_user_override: dict[str, int] = {}
         self._langfuse = LangfuseSettingsStore(
@@ -539,6 +540,43 @@ class AgentManager:
                     "failed",
                     error=AGENT_START_TIMEOUT,
                 )
+
+    async def restore_default_agents(self) -> None:
+        """Start the bundled default expert for each user on desktop boot.
+
+        Desktop mode intentionally does not restore every expert from the
+        control-plane database.  The first-run expert is the one local
+        workspace users expect immediately after a runtime restart; additional
+        experts retain their explicit lifecycle state until the user starts
+        them.
+        """
+        candidates: dict[int | None, list[AgentRow]] = {}
+        for row in self.list_rows():
+            if self._is_default_expert(row):
+                candidates.setdefault(row.user_id, []).append(row)
+        rows = [self._pick_default_expert(items) for items in candidates.values()]
+        for row in rows:
+            try:
+                await asyncio.wait_for(
+                    self._start_agent(row),
+                    timeout=_AGENT_BOOT_START_TIMEOUT,
+                )
+            except TimeoutError:
+                if self._octop_harness_or_none(row.agent_id) is not None:
+                    self._repos.agent_repo.set_state(row.agent_id, "running", error=None)
+                    logger.warning(
+                        "Default expert %s start exceeded %.0fs but is already registered",
+                        row.agent_id,
+                        _AGENT_BOOT_START_TIMEOUT,
+                    )
+                    continue
+                self._repos.agent_repo.set_state(
+                    row.agent_id,
+                    "failed",
+                    error=AGENT_START_TIMEOUT,
+                )
+            except Exception:
+                logger.exception("Default expert %s restore failed", row.agent_id)
 
     async def shutdown(self) -> None:
         await self.memory_slim.close()
@@ -1112,6 +1150,76 @@ class AgentManager:
 
     def list_agents(self, user_id: int) -> list[AgentRow]:
         return self._repos.agent_repo.list_by_user(user_id, include_disabled=False)
+
+    @staticmethod
+    def _is_default_expert(row: AgentRow) -> bool:
+        """Whether *row* is the first-run expert that the client restores.
+
+        Setup uses the stable ``main`` id while invite-created accounts use a
+        generated id, but both are seeded from the ``general-assistant``
+        template.  Keep this predicate deliberately narrow so an ordinary
+        user-created expert never acquires an implicit auto-start policy.
+        """
+        if str(getattr(row, "kind", "expert") or "expert") != "expert":
+            return False
+        config = parse_config_json(row.config_json)
+        return (
+            bool(config.get("is_default"))
+            or row.agent_id == "main"
+            or row.template_name == "general-assistant"
+        )
+
+    @classmethod
+    def _pick_default_expert(cls, rows: Sequence[AgentRow]) -> AgentRow:
+        """Choose one default per owner, preferring the durable bootstrap marker."""
+        return min(
+            rows,
+            key=lambda row: (
+                0 if parse_config_json(row.config_json).get("is_default") else 1,
+                0 if row.agent_id == "main" else 1,
+                row.created_at,
+                row.id,
+            ),
+        )
+
+    async def ensure_default_agent_running(self, user_id: int) -> AgentRow | None:
+        """Restore the user's bundled default expert after authentication.
+
+        The desktop runtime normally restores agents during :meth:`boot`, but
+        a persisted stopped state or a runtime restart can leave the default
+        expert unloaded by the time a user enters the dashboard.  Resolve only
+        the bundled default expert and reuse the normal lifecycle lock; all
+        other experts keep their existing explicit start/stop semantics.
+        """
+        if user_id in self._default_recovery_users:
+            return None
+        self._default_recovery_users.add(user_id)
+        try:
+            rows = [
+                candidate
+                for candidate in self.list_agents(user_id)
+                if self._is_default_expert(candidate)
+            ]
+            row = self._pick_default_expert(rows) if rows else None
+        except Exception:
+            logger.exception("default expert lookup failed for user %s", user_id)
+            self._default_recovery_users.discard(user_id)
+            return None
+        if row is None:
+            self._default_recovery_users.discard(user_id)
+            return None
+        try:
+            if self.runtime_state(row.agent_id, row) != "running":
+                await self.start(row.agent_id)
+            return self.get_row(row.agent_id) or row
+        except Exception:
+            # ``_start_agent`` persists the actual failure reason.  This guard
+            # keeps a background login recovery task from becoming an unhandled
+            # asyncio exception when the runtime is shutting down.
+            logger.exception("default expert recovery failed for user %s", user_id)
+            return self.get_row(row.agent_id) or row
+        finally:
+            self._default_recovery_users.discard(user_id)
 
     def list_rows(self) -> list[AgentRow]:
         """Return all enabled agent rows (all users), sorted by creation time."""
@@ -2635,6 +2743,7 @@ class AgentManager:
                 )
                 return existing
             try:
+                self._repos.agent_repo.set_state(row.agent_id, "starting", error=None)
                 from octop.infra.agents.teams import is_team_agent  # noqa: PLC0415
 
                 cfg, metadata, tags, user_display = self._agent_runtime_bundle(row)

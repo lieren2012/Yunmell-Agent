@@ -1,9 +1,11 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Result, Spin } from "antd";
 import { Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { OctopEmptyMascot } from "../../../components/EmptyState";
 import type { OctopAgent } from "../../../context/AgentContext";
+import { request } from "../../../api/request";
 import {
   formatAgentError,
   isAgentModelConfigError,
@@ -23,6 +25,91 @@ export default function AgentNotReadyScreen({
 }: AgentNotReadyScreenProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [localState, setLocalState] = useState(agent?.state ?? "unknown");
+  const [localError, setLocalError] = useState(agent?.last_error ?? null);
+  const [retrying, setRetrying] = useState(false);
+  const autoStartedAgentRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setLocalState(agent?.state ?? "unknown");
+    setLocalError(agent?.last_error ?? null);
+  }, [agent?.agent_id, agent?.last_error, agent?.state]);
+
+  const isDefaultExpert = Boolean(
+    agent &&
+      agent.kind !== "team" &&
+      (agent.agent_id === "main" || agent.template_name === "general-assistant"),
+  );
+
+  const refreshDefaultStatus = useCallback(async () => {
+    if (!agent || !isDefaultExpert) return;
+    const status = await request<{
+      state: string;
+      last_error: string | null;
+    }>(`/agents/${agent.agent_id}/status`);
+    setLocalState(status.state);
+    setLocalError(status.last_error);
+    return status.state;
+  }, [agent, isDefaultExpert]);
+
+  const startDefaultExpert = useCallback(async () => {
+    if (!agent || !isDefaultExpert || retrying) return;
+    setRetrying(true);
+    setLocalState("starting");
+    setLocalError(null);
+    try {
+      await request(`/agents/${agent.agent_id}/start`, { method: "POST" });
+      await refreshDefaultStatus();
+    } catch (error) {
+      setLocalState("failed");
+      setLocalError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRetrying(false);
+    }
+  }, [agent, isDefaultExpert, refreshDefaultStatus, retrying]);
+
+  useEffect(() => {
+    if (!isDefaultExpert || !agent || localState !== "starting") return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const status = await request<{
+          state: string;
+          last_error: string | null;
+        }>(`/agents/${agent.agent_id}/status`);
+        if (!active) return;
+        setLocalState(status.state);
+        setLocalError(status.last_error);
+      } catch (error) {
+        if (!active) return;
+        setLocalError(error instanceof Error ? error.message : String(error));
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 1000);
+    void poll();
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [agent, isDefaultExpert, localState]);
+
+  // A default expert is a local runtime resource. Restore it as soon as the
+  // authenticated dashboard sees it stopped or failed, then let the same
+  // status endpoint provide the real failure reason for the retry action.
+  useEffect(() => {
+    if (
+      !isDefaultExpert ||
+      !agent ||
+      localState === "running" ||
+      localState === "starting" ||
+      retrying ||
+      autoStartedAgentRef.current === agent.agent_id
+    ) {
+      return;
+    }
+    autoStartedAgentRef.current = agent.agent_id;
+    void startDefaultExpert();
+  }, [agent, isDefaultExpert, localState, retrying, startDefaultExpert]);
 
   if (loading) {
     return (
@@ -63,9 +150,9 @@ export default function AgentNotReadyScreen({
     );
   }
 
-  const state = agent.state;
-  const errorText = formatAgentError(agent.last_error, t);
-  const isModelError = isAgentModelConfigError(agent.last_error);
+  const state = localState;
+  const errorText = formatAgentError(localError, t);
+  const isModelError = isAgentModelConfigError(localError);
   const disconnected = Boolean(agent.bridge && agent.bridge_disconnected);
 
   let title = t("chat.agentNotRunning");
@@ -89,8 +176,10 @@ export default function AgentNotReadyScreen({
     title = t("chat.agentFailed");
     subTitle = errorText || t("chat.agentFailedHint");
   } else if (state === "stopped" || state === "created") {
-    title = t("chat.agentNotRunning");
-    subTitle = t("chat.agentNotRunningHint");
+    if (isDefaultExpert) {
+      title = t("chat.agentStarting");
+      subTitle = t("chat.agentStartingHint");
+    }
   } else if (state === "starting" || state === "stopping") {
     title = t("chat.agentStarting");
     subTitle = t("chat.agentStartingHint");
@@ -118,6 +207,14 @@ export default function AgentNotReadyScreen({
                   ? "chat.remoteExpert.openBridge"
                   : "chat.remoteExpert.reconnect",
               )}
+            </Button>
+          ) : isDefaultExpert && (state === "failed" || state === "stopped" || state === "created") ? (
+            <Button
+              type="primary"
+              loading={retrying}
+              onClick={() => void startDefaultExpert()}
+            >
+              {t("experts.retryStart", "重试启动")}
             </Button>
           ) : isModelError ? (
             <Button

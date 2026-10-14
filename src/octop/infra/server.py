@@ -522,8 +522,11 @@ class OctopServer:
         )
         registry.set_proactive_scheduler(proactive_scheduler)
 
-        if control_plane_only() or desktop_mode():
+        if control_plane_only():
             await registry.boot(start_existing=False)
+        elif desktop_mode():
+            await registry.boot(start_existing=False)
+            await registry.restore_default_agents()
         else:
             await registry.boot()
         await gateway.refresh_media_backends()

@@ -132,6 +132,49 @@ async def test_boot_starts_pre_existing_agents(tmp_path: Path, monkeypatch) -> N
 
 
 @pytest.mark.asyncio
+async def test_restore_default_agents_starts_only_bundled_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Desktop recovery restores the default expert, leaving other experts stopped."""
+    services = _make_services(tmp_path)
+    fake_hm = _patch_harness(monkeypatch)
+    services.repos.agent_repo.create(
+        agent_id="main",
+        user_id=None,
+        name="default",
+        template_name="general-assistant",
+    )
+    services.repos.agent_repo.create(agent_id="custom", user_id=None, name="custom")
+
+    registry = AgentManager(repos=services.repos, paths=services.paths)
+    await registry.boot(start_existing=False)
+    await registry.restore_default_agents()
+
+    fake_hm.acreate_agent.assert_called_once()
+    assert services.repos.agent_repo.get("main").last_state == "running"  # type: ignore[union-attr]
+    assert services.repos.agent_repo.get("custom").last_state is None  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_ensure_default_agent_running_ignores_custom_experts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    services = _make_services(tmp_path)
+    fake_hm = _patch_harness(monkeypatch)
+    user_id = services.repos.user_repo.create(
+        username="custom-owner", password_hash="hash", role="user"
+    )
+    services.repos.agent_repo.create(agent_id="custom", user_id=user_id, name="custom")
+
+    registry = AgentManager(repos=services.repos, paths=services.paths)
+    await registry.boot(start_existing=False)
+    await registry.ensure_default_agent_running(user_id)
+
+    fake_hm.acreate_agent.assert_not_called()
+    assert services.repos.agent_repo.get("custom").last_state is None  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
 async def test_boot_skips_disabled_agents(tmp_path: Path, monkeypatch) -> None:
     """boot() must not start agents that have enabled=0."""
     services = _make_services(tmp_path)
