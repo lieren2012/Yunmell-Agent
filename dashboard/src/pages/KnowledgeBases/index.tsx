@@ -288,12 +288,16 @@ function PersonalReadinessCard({
   modelOptions,
   onDownload,
   onActivate,
+  onInstallOcr,
+  ocrInstalling,
   onOpenSettings,
 }: {
   readiness: ReturnType<typeof resolvePersonalReadiness>;
   modelOptions: KnowledgeOnnxModel[];
   onDownload: (modelId: string) => void;
   onActivate: (modelId: string) => void;
+  onInstallOcr: () => void;
+  ocrInstalling: boolean;
   onOpenSettings?: () => void;
 }) {
   const { t } = useTranslation();
@@ -353,14 +357,25 @@ function PersonalReadinessCard({
               </Typography.Text>
             ) : null}
           </div>
-          <Typography.Text
-            type="secondary"
-            className={styles.personalReadinessHint}
-          >
-            {readiness.ocrUsable
-              ? t("knowledgeBases.personalOcrReady")
-              : t("knowledgeBases.personalOcrOptional")}
-          </Typography.Text>
+          <div className={styles.personalReadinessOcr}>
+            <Typography.Text
+              type="secondary"
+              className={styles.personalReadinessHint}
+            >
+              {readiness.ocrUsable
+                ? t("knowledgeBases.personalOcrReady")
+                : t("knowledgeBases.personalOcrOptional")}
+            </Typography.Text>
+            {!readiness.ocrUsable ? (
+              <Button
+                size="small"
+                loading={ocrInstalling}
+                onClick={onInstallOcr}
+              >
+                {t("knowledgeBases.installPersonalOcr")}
+              </Button>
+            ) : null}
+          </div>
         </div>
       }
     />
@@ -403,6 +418,7 @@ export default function KnowledgeBasesPage() {
   );
   const [catalog, setCatalog] = useState<KnowledgeOnnxModel[]>([]);
   const [onnxDownloading, setOnnxDownloading] = useState(false);
+  const [ocrInstalling, setOcrInstalling] = useState(false);
   const [downloadProgressOpen, setDownloadProgressOpen] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadProgressLabel, setDownloadProgressLabel] = useState("");
@@ -1500,6 +1516,25 @@ export default function KnowledgeBasesPage() {
     }
   };
 
+  const installPersonalOcr = async () => {
+    setOcrInstalling(true);
+    try {
+      const result = await knowledgeBasesApi.installPersonalOcr();
+      await loadCapability();
+      if (result.ready) {
+        message.success(t("knowledgeBases.personalOcrInstalled"));
+      } else {
+        message.warning(t("knowledgeBases.personalOcrInstallFailed"));
+      }
+    } catch (error) {
+      message.error(
+        apiErrorMessage(error, t("knowledgeBases.personalOcrInstallFailed"), t),
+      );
+    } finally {
+      setOcrInstalling(false);
+    }
+  };
+
   const dismissDownloadProgressToBackground = () => {
     setDownloadProgressOpen(false);
     message.info(t("models.localDownloadBackground"));
@@ -2520,6 +2555,8 @@ export default function KnowledgeBasesPage() {
                         modelOptions={catalog}
                         onDownload={startOnnxDownload}
                         onActivate={activatePersonalOnnx}
+                        onInstallOcr={() => void installPersonalOcr()}
+                        ocrInstalling={ocrInstalling}
                         onOpenSettings={
                           canConfigureKb ? openSettings : undefined
                         }

@@ -67,6 +67,14 @@ describe("knowledgeBasesApi", () => {
     );
   });
 
+  it("installs personal OCR through the knowledge-base permission", () => {
+    knowledgeBasesApi.installPersonalOcr();
+    expect(request).toHaveBeenCalledWith(
+      "/knowledge-bases/personal-ocr-install",
+      { method: "POST" },
+    );
+  });
+
   it("uses the enterprise projection endpoints and maps rows to read-only bases", async () => {
     request.mockResolvedValueOnce([
       {
