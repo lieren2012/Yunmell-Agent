@@ -262,7 +262,7 @@ export default function SetupPage() {
                     ? "/logo_horizontal_white.svg"
                     : "/logo_horizontal_dark.svg"
                 }
-                alt="Octop"
+                alt="云迈智能体"
                 className={styles.wizardHeaderLogo}
               />
               <div className={styles.wizardHeaderBrandText}>

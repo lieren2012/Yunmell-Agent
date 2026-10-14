@@ -190,6 +190,8 @@ export default defineConfig(({ mode }) => {
           "pwa-192.png",
           "pwa-512.png",
           "apple-touch-icon.png",
+          "yunmell-icon.png",
+          "favico.svg",
         ],
         workbox: {
           // Precache hashed entry + vendor chunks. Do NOT precache index.html:

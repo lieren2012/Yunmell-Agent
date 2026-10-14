@@ -578,6 +578,69 @@ async def test_onnx_activate_enables_downloaded_service(
 
 
 @pytest.mark.asyncio
+async def test_personal_onnx_activation_keeps_enterprise_settings_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from octop.api.routers import knowledge_bases
+
+    settings = {
+        "knowledge_embedding_model": "enterprise-model",
+        "knowledge_embedding_backend": "remote",
+    }
+    selected: list[str] = []
+    async def ready(**_: object) -> str:
+        return "ready"
+
+    monkeypatch.setattr(knowledge_bases, "ensure_local_embedding_deps_async", ready)
+    monkeypatch.setattr(knowledge_bases, "assert_catalog_model", lambda model: model)
+    monkeypatch.setattr(knowledge_bases, "is_model_downloaded", lambda _model: True)
+    monkeypatch.setattr(
+        knowledge_bases,
+        "get_personal_capability",
+        lambda _get: {"selected_model": "old-personal-model"},
+    )
+    monkeypatch.setattr(
+        knowledge_bases,
+        "set_personal_embedding_model",
+        lambda _set, model, **_: selected.append(model) or model,
+    )
+    monkeypatch.setattr(
+        knowledge_bases,
+        "status_payload",
+        lambda *_args, **_kwargs: {"enabled": False, "model": ""},
+    )
+    monkeypatch.setattr(
+        knowledge_bases,
+        "reindex_all_documents",
+        lambda *_args, **_kwargs: 0,
+    )
+    server = SimpleNamespace(
+        services=SimpleNamespace(
+            settings_repo=SimpleNamespace(get=settings.get, set=settings.__setitem__),
+            knowledge_repo=None,
+        )
+    )
+    user = SimpleNamespace(id=7, is_admin=False, permissions=["knowledge_bases"])
+
+    from octop.infra.agents.providers.onnx_catalog import ONNX_PRESET_MODEL_IDS
+
+    target_model = ONNX_PRESET_MODEL_IDS[1]
+    response = await knowledge_bases.activate_onnx_service(
+        knowledge_bases.OnnxDownloadBody(model=target_model),
+        request=_request(),
+        server=server,
+        _=user,
+    )
+
+    assert selected == [target_model]
+    assert settings == {
+        "knowledge_embedding_model": "enterprise-model",
+        "knowledge_embedding_backend": "remote",
+    }
+    assert response["personal_model"] == target_model
+
+
+@pytest.mark.asyncio
 async def test_personal_ocr_install_is_on_demand(monkeypatch: pytest.MonkeyPatch) -> None:
     from octop.api.routers import knowledge_bases
 
