@@ -151,6 +151,7 @@ jobs:
   sync-develop:
     name: Trigger sync main into develop
     needs: github-release
+    if: github.repository == 'TencentCloud/Octop'
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch Sync Main Into Develop
@@ -167,6 +168,7 @@ jobs:
   trigger-fnos:
     name: Trigger FnOS FPK build
     needs: github-release
+    if: github.repository == 'TencentCloud/Octop'
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch Build Octop FPK
