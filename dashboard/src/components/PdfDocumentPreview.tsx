@@ -28,8 +28,7 @@ import {
   Scan,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Document, Page, pdfjs } from "react-pdf";
-import type { PDFDocumentProxy } from "pdfjs-dist";
+import { Document, Page, pdfjs, type DocumentProps } from "react-pdf";
 
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -78,9 +77,21 @@ export interface PdfOutlineItem {
   items?: PdfOutlineItem[];
 }
 
-/** Structural subset of ``PDFDocumentProxy`` this viewer needs. */
+/**
+ * Use the document type from react-pdf's own onLoadSuccess callback.
+ *
+ * react-pdf pins its PDF.js runtime, while other dashboard dependencies may
+ * expose a different top-level pdfjs-dist version. Importing PDFDocumentProxy
+ * directly from that top-level package makes otherwise-compatible callbacks
+ * invariant and fails type checking when the versions differ.
+ */
+type ReactPdfDocument = Parameters<
+  NonNullable<DocumentProps["onLoadSuccess"]>
+>[0];
+
+/** Structural subset of react-pdf's ``PDFDocumentProxy`` this viewer needs. */
 type PdfDocumentLike = Pick<
-  PDFDocumentProxy,
+  ReactPdfDocument,
   "numPages" | "getPage" | "getOutline" | "getDestination" | "getPageIndex"
 >;
 
