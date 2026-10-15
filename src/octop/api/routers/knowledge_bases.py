@@ -1226,4 +1226,3 @@ async def reindex_base(
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server
         ) from exc
-

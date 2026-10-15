@@ -460,4 +460,3 @@ class _RemoteOcr:
                 continue
             parts.append(text)
         return "\n\n".join(parts)
-
