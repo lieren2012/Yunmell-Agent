@@ -315,7 +315,11 @@ def _require_usable(server: OctopServer, request: Request, *, kb_id: str | None 
 
 def _capability_payload(server: OctopServer) -> dict[str, Any]:
     assert server.services is not None
-    ocr_root = getattr(getattr(server.services, "paths", None), "root", personal_ocr_root()) / "ocr" / "rapidocr"
+    ocr_root = (
+        getattr(getattr(server.services, "paths", None), "root", personal_ocr_root())
+        / "ocr"
+        / "rapidocr"
+    )
     payload = get_capability(server.services.settings_repo.get, server.services.provider_repo)
     payload["ocr"] = get_ocr_capability(
         server.services.settings_repo.get,
