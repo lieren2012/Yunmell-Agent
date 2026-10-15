@@ -51,6 +51,7 @@ class ProviderCreateBody(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     extra_json: str | None = None
+    stream_usage: bool | None = None
     models: list[dict[str, Any]] | None = None
     note: str | None = None
 
@@ -60,6 +61,7 @@ class ProviderPatchBody(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     extra_json: str | None = None
+    stream_usage: bool | None = None
     models: list[dict[str, Any]] | None = None
     note: str | None = None
     enabled: bool | None = None
@@ -67,8 +69,21 @@ class ProviderPatchBody(BaseModel):
 
 # Fields that affect harness factory / agent runtime when patched.
 _PROVIDER_REHYDRATE_FIELDS = frozenset(
-    {"kind", "base_url", "api_key", "extra_json", "models", "enabled"}
+    {"kind", "base_url", "api_key", "extra_json", "stream_usage", "models", "enabled"}
 )
+
+
+def merge_stream_usage_extra(raw: str | None, value: bool | None) -> str | None:
+    if value is None:
+        return raw
+    try:
+        parsed = json.loads(raw or "{}")
+    except (TypeError, json.JSONDecodeError):
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    parsed["stream_usage"] = bool(value)
+    return json.dumps(parsed, ensure_ascii=False)
 
 
 def _patch_requires_provider_rehydrate(body: ProviderPatchBody) -> bool:
@@ -270,7 +285,7 @@ async def admin_create_provider(
         kind=body.kind,
         base_url=body.base_url,
         api_key=body.api_key,
-        extra_json=body.extra_json,
+        extra_json=merge_stream_usage_extra(body.extra_json, body.stream_usage),
         models_json=models_json,
         note=body.note,
     )
