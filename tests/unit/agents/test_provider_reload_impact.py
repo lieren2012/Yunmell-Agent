@@ -191,3 +191,28 @@ async def test_desktop_provider_sync_returns_before_slow_runtime_reload(tmp_path
         release.set()
         if started.is_set():
             await asyncio.wait_for(finished.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_deferred_provider_reload_keeps_shared_concurrency_cap(tmp_path, monkeypatch):
+    services = _make_services(tmp_path)
+    registry = _registry(services)
+    registry._deferred_reload_semaphore = asyncio.Semaphore(2)
+    started = 0
+    peak = 0
+    release = asyncio.Event()
+
+    async def slow_reload(_agent_id):
+        nonlocal started, peak
+        started += 1
+        peak = max(peak, started)
+        await release.wait()
+        started -= 1
+
+    monkeypatch.setattr(registry, "_reload_agent", slow_reload)
+    for agent_id in ["a", "b", "c", "d"]:
+        registry._schedule_reload(agent_id)
+    await asyncio.sleep(0.05)
+    assert peak == 2
+    release.set()
+    await asyncio.sleep(0.05)

@@ -409,6 +409,10 @@ class AgentManager:
         self._history_backfills: dict[str, asyncio.Event] = {}
         self._reload_dirty: set[str] = set()
         self._reload_worker_running: dict[str, bool] = {}
+        # Deferred provider reloads use one shared cap as well; desktop login
+        # must return promptly without allowing every impacted expert to rebuild
+        # its workspace at once.
+        self._deferred_reload_semaphore = asyncio.Semaphore(_PROVIDER_RELOAD_CONCURRENCY)
         self._bootstrap_graph_refresh_pending: set[str] = set()
         self._default_recovery_users: set[int] = set()
         # Chat user id used to resolve connectors when agent.user_id is NULL (shared agents).
@@ -3104,7 +3108,8 @@ class AgentManager:
             while agent_id in self._reload_dirty:
                 self._reload_dirty.discard(agent_id)
                 try:
-                    await self._reload_agent(agent_id)
+                    async with self._deferred_reload_semaphore:
+                        await self._reload_agent(agent_id)
                 except Exception:
                     logger.exception("Background reload failed for agent %s", agent_id)
                 if agent_id not in self._reload_dirty:
