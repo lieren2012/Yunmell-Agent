@@ -850,6 +850,7 @@ async def get_base(
             ),
         )
     except Exception as exc:
+        # Keep reindex failures visible to the caller with the normal API error envelope.
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server
         ) from exc
