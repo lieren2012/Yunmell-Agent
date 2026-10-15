@@ -362,17 +362,28 @@ function PersonalReadinessCard({
               type="secondary"
               className={styles.personalReadinessHint}
             >
-              {readiness.ocrUsable
+              {readiness.ocrStatus === "ready"
                 ? t("knowledgeBases.personalOcrReady")
-                : t("knowledgeBases.personalOcrOptional")}
+                : readiness.ocrStatus === "installing"
+                  ? `${t("knowledgeBases.personalOcrInstalling")} ${Math.round(
+                      readiness.ocrProgress * 100,
+                    )}%`
+                  : readiness.ocrStatus === "failed"
+                    ? `${t("knowledgeBases.personalOcrInstallFailed")}${
+                        readiness.ocrError ? `：${readiness.ocrError}` : ""
+                      }`
+                    : t("knowledgeBases.personalOcrOptional")}
             </Typography.Text>
-            {!readiness.ocrUsable ? (
+            {readiness.ocrStatus !== "ready" ? (
               <Button
                 size="small"
-                loading={ocrInstalling}
+                loading={ocrInstalling || readiness.ocrStatus === "installing"}
                 onClick={onInstallOcr}
+                disabled={readiness.ocrStatus === "installing"}
               >
-                {t("knowledgeBases.installPersonalOcr")}
+                {readiness.ocrStatus === "failed"
+                  ? t("knowledgeBases.retryPersonalOcr")
+                  : t("knowledgeBases.installPersonalOcr")}
               </Button>
             ) : null}
           </div>
@@ -393,9 +404,8 @@ export default function KnowledgeBasesPage() {
   const user = useCurrentUser();
   const canConfigureKb = userCan(user, "knowledge_settings");
   const canUseKnowledge = userCan(user, "knowledge_bases");
-  const { viewMode, setViewMode, showCardView } = useCardTableView(
-    loadDocsViewMode(),
-  );
+  const { viewMode, setViewMode, showCardView } =
+    useCardTableView(loadDocsViewMode());
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
   const [enterpriseBases, setEnterpriseBases] = useState<KnowledgeBase[]>([]);
   const [libraryScope, setLibraryScope] =
@@ -1078,9 +1088,8 @@ export default function KnowledgeBasesPage() {
       try {
         if (libraryScope === "enterprise") {
           const base = await knowledgeBasesApi.getEnterprise(id);
-          const nextDocuments = await knowledgeBasesApi.listEnterpriseDocuments(
-            id,
-          );
+          const nextDocuments =
+            await knowledgeBasesApi.listEnterpriseDocuments(id);
           if (!detailRequestGate.current.isCurrent(requestId)) return;
           setSelected(base);
           setDocuments(nextDocuments);
@@ -1458,7 +1467,7 @@ export default function KnowledgeBasesPage() {
         : capability?.personal_local?.model || personalReadiness.model) ||
       undefined;
     const selectedBackend = canConfigureKb
-      ? capability?.backend ?? "onnx"
+      ? (capability?.backend ?? "onnx")
       : "onnx";
     onnxExpandedRef.current = false;
     setOnnxExpanded(false);
@@ -1477,7 +1486,7 @@ export default function KnowledgeBasesPage() {
       const options = await loadEmbeddingOptions(false);
       const selectedInCatalog = Boolean(
         selectedModel &&
-          options?.onnx.some((model) => model.id === selectedModel),
+        options?.onnx.some((model) => model.id === selectedModel),
       );
       if (selectedBackend === "onnx" && selectedModel && !selectedInCatalog) {
         await loadEmbeddingOptions(true);
@@ -1589,8 +1598,17 @@ export default function KnowledgeBasesPage() {
     try {
       const result = await knowledgeBasesApi.installPersonalOcr();
       await loadCapability();
-      if (result.ready) {
+      let state = result;
+      for (let attempt = 0; attempt < 900; attempt += 1) {
+        if (state.status !== "installing") break;
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        state = await knowledgeBasesApi.getPersonalOcrStatus();
+        await loadCapability();
+      }
+      if (state.ready || state.status === "ready") {
         message.success(t("knowledgeBases.personalOcrInstalled"));
+      } else if (state.error) {
+        message.error(state.error);
       } else {
         message.warning(t("knowledgeBases.personalOcrInstallFailed"));
       }
@@ -3565,6 +3583,7 @@ export default function KnowledgeBasesPage() {
             <Button
               type="primary"
               loading={featureSaving}
+              style={{ display: canConfigureKb ? undefined : "none" }}
               disabled={
                 featureEnabledDraft
                   ? !featureModel ||
@@ -3826,7 +3845,8 @@ export default function KnowledgeBasesPage() {
                               dim: onnxProbe.dim ?? "?",
                               ms: Math.round(onnxProbe.latency_ms ?? 0),
                             })
-                          : onnxProbe.error ?? t("knowledgeBases.probeFailed")}
+                          : (onnxProbe.error ??
+                            t("knowledgeBases.probeFailed"))}
                       </Typography.Text>
                     ) : (
                       <Typography.Text type="secondary">
@@ -3850,6 +3870,39 @@ export default function KnowledgeBasesPage() {
               <Typography.Link onClick={() => navigate("/admin/models")}>
                 {t("knowledgeBases.manageModels")}
               </Typography.Link>
+              {!canConfigureKb ? (
+                <Alert
+                  type={
+                    personalReadiness.ocrStatus === "failed" ? "error" : "info"
+                  }
+                  showIcon
+                  message={
+                    personalReadiness.ocrStatus === "ready"
+                      ? t("knowledgeBases.personalOcrReady")
+                      : personalReadiness.ocrStatus === "installing"
+                        ? `${t("knowledgeBases.personalOcrInstalling")} ${Math.round(personalReadiness.ocrProgress * 100)}%`
+                        : t("knowledgeBases.personalOcrOptional")
+                  }
+                  description={personalReadiness.ocrError || undefined}
+                  action={
+                    personalReadiness.ocrStatus === "ready" ? null : (
+                      <Button
+                        size="small"
+                        loading={
+                          ocrInstalling ||
+                          personalReadiness.ocrStatus === "installing"
+                        }
+                        disabled={personalReadiness.ocrStatus === "installing"}
+                        onClick={() => void installPersonalOcr()}
+                      >
+                        {personalReadiness.ocrStatus === "failed"
+                          ? t("knowledgeBases.retryPersonalOcr")
+                          : t("knowledgeBases.installPersonalOcr")}
+                      </Button>
+                    )
+                  }
+                />
+              ) : null}
               <div className={styles.ocrSettings}>
                 <div className={styles.formOptionRow}>
                   <div className={styles.formOptionCopy}>
@@ -3864,6 +3917,7 @@ export default function KnowledgeBasesPage() {
                     size="small"
                     checked={ocrEnabledDraft}
                     onChange={setOcrEnabledDraft}
+                    disabled={!canConfigureKb}
                   />
                 </div>
                 {ocrEnabledDraft ? (
@@ -3988,3 +4042,4 @@ export default function KnowledgeBasesPage() {
     </PageShell>
   );
 }
+

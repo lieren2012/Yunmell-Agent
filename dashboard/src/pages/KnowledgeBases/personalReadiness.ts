@@ -32,6 +32,9 @@ export type PersonalLocalCapability = {
     enabled?: boolean;
     backend?: "onnx" | "remote";
     model?: string | null;
+    status?: "not_installed" | "installing" | "ready" | "failed";
+    progress?: number;
+    error?: string | null;
     deps_available?: boolean;
     usable?: boolean;
   };
@@ -43,6 +46,9 @@ export type PersonalReadiness = {
   depsAvailable: boolean;
   usable: boolean;
   ocrUsable: boolean;
+  ocrStatus: "not_installed" | "installing" | "ready" | "failed";
+  ocrProgress: number;
+  ocrError: string | null;
   /** A local model can be downloaded or activated from the personal page. */
   canDownload: boolean;
   canActivate: boolean;
@@ -61,35 +67,39 @@ export function resolvePersonalReadiness(
     local?.model || local?.selected_model || legacyModel || null;
   const catalogModel = selectedModel
     ? catalog.find((entry) => entry.id === selectedModel)
-    : catalog.find((entry) => entry.downloaded) ??
+    : (catalog.find((entry) => entry.downloaded) ??
       catalog.find((entry) => entry.recommended) ??
-      catalog[0];
+      catalog[0]);
   const model = selectedModel || catalogModel?.id || null;
   const downloaded = Boolean(
     local?.downloaded ??
-      local?.checks?.model_downloaded ??
-      catalogModel?.downloaded ??
-      (capability?.backend === "onnx" && capability.checks.model_downloaded),
+    local?.checks?.model_downloaded ??
+    catalogModel?.downloaded ??
+    (capability?.backend === "onnx" && capability.checks.model_downloaded),
   );
   const depsAvailable = Boolean(
     local?.deps_available ??
-      local?.checks?.deps_available ??
-      (capability?.backend === "onnx" && capability.checks.deps_available),
+    local?.checks?.deps_available ??
+    (capability?.backend === "onnx" && capability.checks.deps_available),
   );
   const usable = Boolean(
     local?.usable ??
-      (capability?.backend === "onnx" &&
-        capability?.usable &&
-        downloaded &&
-        depsAvailable),
+    (capability?.backend === "onnx" &&
+      capability?.usable &&
+      downloaded &&
+      depsAvailable),
   );
   const ocrUsable = Boolean(
     local?.ocr?.usable ??
-      (local?.ocr
-        ? local.ocr.backend === "onnx" &&
-          Boolean(local.ocr.deps_available ?? local.ocr.checks?.deps_available)
-        : capability?.ocr?.backend === "onnx" && capability?.ocr?.usable),
+    (local?.ocr
+      ? local.ocr.backend === "onnx" &&
+        Boolean(local.ocr.deps_available ?? local.ocr.checks?.deps_available)
+      : capability?.ocr?.backend === "onnx" && capability?.ocr?.usable),
   );
+  const ocrStatus =
+    local?.ocr?.status ?? (ocrUsable ? "ready" : "not_installed");
+  const ocrProgress = Number(local?.ocr?.progress ?? (ocrUsable ? 1 : 0));
+  const ocrError = local?.ocr?.error ?? null;
   const activeDownload =
     downloadState?.status === "downloading" ||
     downloadState?.status === "loading";
@@ -99,9 +109,13 @@ export function resolvePersonalReadiness(
     depsAvailable,
     usable,
     ocrUsable,
+    ocrStatus,
+    ocrProgress,
+    ocrError,
     canDownload:
       Boolean(model || catalogModel) && !downloaded && !activeDownload,
     canActivate: downloaded && !usable && !activeDownload,
     downloadInProgress: activeDownload,
   };
 }
+

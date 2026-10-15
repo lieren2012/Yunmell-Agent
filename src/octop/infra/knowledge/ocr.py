@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import re
 import threading
 from collections.abc import Iterator
@@ -31,6 +32,9 @@ _PROVIDER_ID_KEY = "knowledge_ocr_provider_id"
 _LOCAL_PACKAGES = ("rapidocr>=3.4,<4", "onnxruntime>=1.17", "pymupdf>=1.24")
 _LOCAL_SPEC = PackageInstallSpec(packages=_LOCAL_PACKAGES, extra_fallback="knowledge-ocr")
 _PDF_SPEC = PackageInstallSpec(packages=("pymupdf>=1.24",), extra_fallback="knowledge-ocr")
+_PERSONAL_STATUS_KEY = "knowledge_personal_ocr_status"
+_PERSONAL_PROGRESS_KEY = "knowledge_personal_ocr_progress"
+_PERSONAL_ERROR_KEY = "knowledge_personal_ocr_error"
 _OCR_PROMPT = (
     "Transcribe all visible text in this image exactly. Preserve reading order, headings, "
     "lists, and table rows. Return only the transcription, without commentary."
@@ -64,6 +68,83 @@ def _is_no_image_refusal(text: str) -> bool:
 
 _local_engine: Any | None = None
 _local_engine_lock = threading.Lock()
+
+
+def personal_ocr_root() -> Path:
+    """Return the persistent model directory for the local OCR runtime."""
+    raw = os.environ.get("OCTOP_HOME", "").strip()
+    home = Path(raw).expanduser() if raw else Path.home() / ".octop"
+    return home / "ocr" / "rapidocr"
+
+
+def _rapidocr_config_path(model_root: Path) -> Path:
+    import rapidocr
+
+    package_config = Path(rapidocr.__file__).resolve().parent / "config.yaml"
+    config_path = model_root / "rapidocr-config.yaml"
+    if not config_path.exists():
+        text = package_config.read_text(encoding="utf-8")
+        text = text.replace(
+            "model_root_dir: null",
+            f"model_root_dir: '{model_root.as_posix()}'",
+            1,
+        )
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(text, encoding="utf-8")
+    return config_path
+
+
+def rapidocr_models_ready(model_root: Path | None = None) -> bool:
+    root = model_root or personal_ocr_root()
+    # The default Chinese detector, recognizer, and classifier are all required.
+    return len(list(root.glob("*.onnx"))) >= 3 and any(root.glob("*.txt"))
+
+
+def personal_ocr_status(
+    settings_get: Any, model_root: Path | None = None, *, installing: bool = False
+) -> dict[str, Any]:
+    root = model_root or personal_ocr_root()
+    deps = local_ocr_deps_available()
+    models = rapidocr_models_ready(root)
+    saved = str(settings_get(_PERSONAL_STATUS_KEY) or "not_installed")
+    error = str(settings_get(_PERSONAL_ERROR_KEY) or "")
+    if deps and models:
+        state = "ready"
+    elif saved == "installing" and installing:
+        state = "installing"
+    elif saved == "installing":
+        # A persisted installation marker cannot survive a process restart as
+        # an active task. Surface it as retryable failure instead of claiming
+        # that a dead installer is still running.
+        state = "failed"
+        if not error:
+            error = "OCR 安装被中断，请重试"
+    elif saved == "failed":
+        state = "failed"
+    else:
+        state = "not_installed"
+    try:
+        progress = float(settings_get(_PERSONAL_PROGRESS_KEY) or (1 if state == "ready" else 0))
+    except (TypeError, ValueError):
+        progress = 0.0
+    return {
+        "status": state,
+        "progress": max(0.0, min(1.0, progress)),
+        "error": error or None,
+        "deps_available": deps,
+        "model_downloaded": models,
+        "ready": state == "ready",
+        "backend": "onnx",
+        "model": "rapidocr",
+    }
+
+
+def set_personal_ocr_status(
+    settings_set: Any, *, status: str, progress: float, error: str = ""
+) -> None:
+    settings_set(_PERSONAL_STATUS_KEY, status)
+    settings_set(_PERSONAL_PROGRESS_KEY, str(max(0.0, min(1.0, progress))))
+    settings_set(_PERSONAL_ERROR_KEY, error[:1000])
 
 
 class OcrExtractor(Protocol):
@@ -117,7 +198,7 @@ def pdf_ocr_deps_available() -> bool:
     return True
 
 
-def ensure_ocr_deps(*, backend: str) -> str:
+def ensure_ocr_deps(*, backend: str, model_root: Path | None = None) -> str:
     if backend == "onnx":
         if local_ocr_deps_available():
             return "ready"
@@ -146,6 +227,25 @@ async def ensure_ocr_deps_async(*, backend: str) -> str:
     return await loop.run_in_executor(None, lambda: ensure_ocr_deps(backend=backend))
 
 
+def ensure_rapidocr_models(model_root: Path | None = None) -> str:
+    """Download and verify the detector/classifier/Chinese recognizer models."""
+    root = model_root or personal_ocr_root()
+    if rapidocr_models_ready(root):
+        return "ready"
+    import rapidocr
+
+    config_path = _rapidocr_config_path(root)
+    rapidocr.download_models(str(config_path))
+    if not rapidocr_models_ready(root):
+        raise RuntimeError("RapidOCR 中文模型下载完成但校验未通过")
+    return "installed"
+
+
+async def ensure_rapidocr_models_async(model_root: Path | None = None) -> str:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: ensure_rapidocr_models(model_root))
+
+
 def _provider_for_config(provider_repo: Any, config: OcrConfig) -> Any | None:
     if provider_repo is None or not config.provider_id.isdigit():
         return None
@@ -167,7 +267,9 @@ def _remote_ready(provider: Any | None, model_id: str) -> bool:
     )
 
 
-def get_ocr_capability(settings_get: Any, provider_repo: Any = None) -> dict[str, Any]:
+def get_ocr_capability(
+    settings_get: Any, provider_repo: Any = None, model_root: Path | None = None
+) -> dict[str, Any]:
     config = load_ocr_config(settings_get)
     provider = _provider_for_config(provider_repo, config)
     # On a fresh install OCR is disabled and no model is selected.  Loading
@@ -176,8 +278,11 @@ def get_ocr_capability(settings_get: Any, provider_repo: Any = None) -> dict[str
     # the feature is enabled or a model has been selected.
     should_probe_local = config.backend == "onnx" and (config.enabled or bool(config.model))
     deps_available = local_ocr_deps_available() if should_probe_local else False
+    models_available = rapidocr_models_ready(model_root) if should_probe_local else False
     prerequisites_ok = (
-        deps_available if config.backend == "onnx" else _remote_ready(provider, config.model)
+        deps_available and models_available
+        if config.backend == "onnx"
+        else _remote_ready(provider, config.model)
     )
     return {
         "enabled": config.enabled,
@@ -190,6 +295,7 @@ def get_ocr_capability(settings_get: Any, provider_repo: Any = None) -> dict[str
             "deps_available": (
                 deps_available if config.backend == "onnx" else pdf_ocr_deps_available()
             ),
+            "model_downloaded": models_available if config.backend == "onnx" else True,
             "provider_ready": _remote_ready(provider, config.model),
         },
     }
@@ -230,8 +336,8 @@ def validate_ocr_settings(
         raise ValueError("knowledge OCR backend must be onnx or remote")
     selected_model = (model or "").strip()
     selected_provider_id = (provider_id or "").strip()
-    if enabled and selected_backend == "onnx" and not local_ocr_deps_available():
-        raise RuntimeError("knowledge local OCR prerequisites are not satisfied")
+    # Package/model installation is performed by the caller before settings are
+    # persisted. This validation only checks the selected backend and provider.
     if enabled and selected_backend == "remote":
         config = OcrConfig(True, selected_backend, selected_model, selected_provider_id)
         if not _remote_ready(_provider_for_config(provider_repo, config), selected_model):
@@ -244,7 +350,7 @@ def require_ocr_extractor(services: Any) -> OcrExtractor:
     if not config.enabled:
         raise RuntimeError("knowledge OCR is not enabled")
     if config.backend == "onnx":
-        if not local_ocr_deps_available():
+        if not local_ocr_deps_available() or not rapidocr_models_ready():
             raise RuntimeError("knowledge local OCR prerequisites are not satisfied")
         return _extract_local
     provider = _provider_for_config(services.provider_repo, config)
@@ -261,7 +367,7 @@ def optional_ocr_extractor(services: Any, *, personal: bool = False) -> OcrExtra
     inheriting that enterprise switch; remote OCR is never selected locally.
     """
     if personal:
-        if not local_ocr_deps_available():
+        if not local_ocr_deps_available() or not rapidocr_models_ready():
             return None
         return _extract_local
     if not load_ocr_config(services.settings_repo.get).enabled:
@@ -303,7 +409,8 @@ def _rapidocr_engine() -> Any:
         if _local_engine is None:
             from rapidocr import RapidOCR
 
-            _local_engine = RapidOCR()
+            root = personal_ocr_root()
+            _local_engine = RapidOCR(config_path=str(_rapidocr_config_path(root)))
         return _local_engine
 
 
@@ -353,3 +460,4 @@ class _RemoteOcr:
                 continue
             parts.append(text)
         return "\n\n".join(parts)
+
