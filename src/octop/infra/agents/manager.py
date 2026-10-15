@@ -1617,12 +1617,15 @@ class AgentManager:
         *,
         provider_name: str | None = None,
         active_model_changed: bool = False,
+        defer_reload: bool = False,
     ) -> None:
         """Sync harness factory from DB, then reload impacted agents (awaited).
 
         When *provider_name* or *active_model_changed* is set, only the impact set
         is rebuilt. With neither set (backup restore, OAuth, unknown), all enabled
         agents are rebuilt in parallel.
+        Desktop login uses ``defer_reload`` to sync the model factory now but
+        reuse background reload workers for slow workspace/graph initialization.
         """
         if self._harness_manager is None:
             return
@@ -1634,12 +1637,15 @@ class AgentManager:
         )
         if self._harness_manager.shared_factory is None:
             return
-        await self._reload_agents(
-            self._provider_reload_impact_ids(
-                provider_name=provider_name,
-                active_model_changed=active_model_changed,
-            )
+        agent_ids = self._provider_reload_impact_ids(
+            provider_name=provider_name,
+            active_model_changed=active_model_changed,
         )
+        if defer_reload:
+            for agent_id in agent_ids:
+                self._schedule_reload(agent_id)
+        else:
+            await self._reload_agents(agent_ids)
 
     # ------------------------------------------------------------------
     # Connectors & MCP — OAuth refresh and pre-chat tool loading

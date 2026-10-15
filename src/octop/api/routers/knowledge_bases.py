@@ -415,7 +415,11 @@ async def embedding_options(
     # administrator concern.  Ordinary users receive the same local ONNX
     # catalog from this endpoint so the personal-library settings can remain
     # independent of the enterprise embedding gate.
-    if not hasattr(_admin, "is_admin") or getattr(_admin, "is_admin", False) or user_has_permission(_admin, "knowledge_settings"):
+    if (
+        not hasattr(_admin, "is_admin")
+        or getattr(_admin, "is_admin", False)
+        or user_has_permission(_admin, "knowledge_settings")
+    ):
         for provider in server.services.provider_repo.list_all():
             if is_onnx_local_provider(
                 provider.name, provider_api_key=getattr(provider, "api_key", None)
@@ -621,9 +625,7 @@ async def activate_onnx_service(
         await ensure_local_embedding_deps_async(allow_install=True)
         assert server.services is not None
         allow_all = bool(
-            not hasattr(_, "is_admin")
-            or _.is_admin
-            or user_has_permission(_, "knowledge_settings")
+            not hasattr(_, "is_admin") or _.is_admin or user_has_permission(_, "knowledge_settings")
         )
         # The global ONNX service is the enterprise/shared setting.  Personal
         # users only select their edge-local model; changing it must not alter

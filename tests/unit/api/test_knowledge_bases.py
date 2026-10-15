@@ -588,6 +588,7 @@ async def test_personal_onnx_activation_keeps_enterprise_settings_unchanged(
         "knowledge_embedding_backend": "remote",
     }
     selected: list[str] = []
+
     async def ready(**_: object) -> str:
         return "ready"
 

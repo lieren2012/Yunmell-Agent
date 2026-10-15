@@ -121,10 +121,7 @@ def reindex_all_documents(
                 base
                 for base in services.knowledge_repo.list_all()
                 if not base.shared
-                and (
-                    personal_owner_id is None
-                    or int(base.owner_user_id) == int(personal_owner_id)
-                )
+                and (personal_owner_id is None or int(base.owner_user_id) == int(personal_owner_id))
             ]
         )
         for base in bases:
