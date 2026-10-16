@@ -282,4 +282,3 @@ def test_remote_ocr_skips_refusal_page_but_keeps_transcribed_page(
     )
 
     assert extractor(pdf) == "第二页正文"
-
