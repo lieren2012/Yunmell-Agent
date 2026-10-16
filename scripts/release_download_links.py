@@ -10,10 +10,29 @@ filename table. Do not scrape the assets list.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 GITHUB_REPO = "lieren2012/Yunmell-Agent"
-DOWNLOAD_BASE = f"https://github.com/{GITHUB_REPO}/releases/download"
+UPSTREAM_REPO = "TencentCloud/Octop"
+
+
+def resolve_repo() -> str:
+    """Repository whose assets the links must point at.
+
+    Inside Actions this follows ``GITHUB_REPOSITORY`` so a fork never links to
+    assets it does not publish; locally it defaults to the Yunmell fork.
+    """
+    return os.environ.get("GITHUB_REPOSITORY") or GITHUB_REPO
+
+
+def publishes_fnos(repo: str) -> bool:
+    """Only upstream Octop builds and publishes the FnOS ``.fpk`` assets.
+
+    ``fnos-build-fpk.yml`` is gated on ``github.repository ==
+    'TencentCloud/Octop'``, so the Yunmell fork would emit three dead links.
+    """
+    return repo == UPSTREAM_REPO
 
 
 def split_tag(raw: str) -> tuple[str, str]:
@@ -26,7 +45,7 @@ def split_tag(raw: str) -> tuple[str, str]:
 
 
 def asset_url(tag: str, filename: str) -> str:
-    return f"{DOWNLOAD_BASE}/{tag}/{filename}"
+    return f"https://github.com/{resolve_repo()}/releases/download/{tag}/{filename}"
 
 
 def md_link(label: str, tag: str, filename: str) -> str:
@@ -57,47 +76,50 @@ def render_download_section(raw_version: str) -> str:
     linux_arm = md_link("ARM64", tag, desktop_name("linux", "arm64", version, "tar.gz"))
     linux64_zip = md_link("64-bit", tag, portable_name("linux", "amd64", version))
     linux_arm_zip = md_link("ARM64", tag, portable_name("linux", "arm64", version))
-    fnos_docker = md_link(
-        "Docker (recommended; x86 and ARM)", tag, f"Octop-fnos-docker-{version}.fpk"
-    )
-    fnos_native = md_link("Native x86_64", tag, f"Octop-fnos-native-{version}.fpk")
-    fnos_native_arm = md_link(
-        "Native ARM64 (no Docker)", tag, f"Octop-fnos-native-arm64-{version}.fpk"
-    )
-    return "\n".join(
-        [
-            "",
-            "## Downloads",
-            "",
-            "### Windows",
-            "",
-            "#### Desktop installer (Recommended)",
-            f"- {win64} | {win_arm}",
-            "",
-            "#### Portable",
-            f"- {win64_zip} | {win_arm_zip}",
-            "",
-            "### macOS",
-            "",
-            "#### Desktop installer (Recommended)",
-            f"- {mac_arm} | {mac_intel}",
-            "",
-            "#### Portable",
-            f"- {mac_arm_zip} | {mac_intel_zip}",
-            "",
-            "### Linux",
-            "",
-            "#### Desktop installer (Recommended)",
-            f"- {linux64} | {linux_arm}",
-            "",
-            "#### Portable",
-            f"- {linux64_zip} | {linux_arm_zip}",
-            "",
+    lines = [
+        "",
+        "## Downloads",
+        "",
+        "### Windows",
+        "",
+        "#### Desktop installer (Recommended)",
+        f"- {win64} | {win_arm}",
+        "",
+        "#### Portable",
+        f"- {win64_zip} | {win_arm_zip}",
+        "",
+        "### macOS",
+        "",
+        "#### Desktop installer (Recommended)",
+        f"- {mac_arm} | {mac_intel}",
+        "",
+        "#### Portable",
+        f"- {mac_arm_zip} | {mac_intel_zip}",
+        "",
+        "### Linux",
+        "",
+        "#### Desktop installer (Recommended)",
+        f"- {linux64} | {linux_arm}",
+        "",
+        "#### Portable",
+        f"- {linux64_zip} | {linux_arm_zip}",
+        "",
+    ]
+    # fnOS packages only exist upstream; listing them on the fork is a dead link.
+    if publishes_fnos(resolve_repo()):
+        fnos_docker = md_link(
+            "Docker (recommended; x86 and ARM)", tag, f"Octop-fnos-docker-{version}.fpk"
+        )
+        fnos_native = md_link("Native x86_64", tag, f"Octop-fnos-native-{version}.fpk")
+        fnos_native_arm = md_link(
+            "Native ARM64 (no Docker)", tag, f"Octop-fnos-native-arm64-{version}.fpk"
+        )
+        lines += [
             "### fnOS NAS",
             f"- {fnos_docker} | {fnos_native} | {fnos_native_arm}",
             "",
         ]
-    )
+    return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
