@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 import types
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -50,9 +50,7 @@ def test_ensure_rapidocr_models_downloads_and_verifies_model_bundle(
 ) -> None:
     package_dir = tmp_path / "rapidocr_pkg"
     package_dir.mkdir()
-    (package_dir / "config.yaml").write_text(
-        "Global:\n    model_root_dir: null\n", encoding="utf-8"
-    )
+    (package_dir / "config.yaml").write_text("Global:\n    model_root_dir: null\n", encoding="utf-8")
     fake = types.ModuleType("rapidocr")
     fake.__file__ = str(package_dir / "__init__.py")
 
