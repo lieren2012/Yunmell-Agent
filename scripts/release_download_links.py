@@ -34,7 +34,9 @@ def md_link(label: str, tag: str, filename: str) -> str:
 
 
 def desktop_name(os_name: str, arch: str, version: str, ext: str) -> str:
-    return f"Octop-desktop-{os_name}-{arch}-{version}.{ext}"
+    # The desktop workflow publishes installers under the Yunmell-Agent-desktop
+    # prefix; the outdated Octop-desktop name produced 404 links on releases.
+    return f"Yunmell-Agent-desktop-{os_name}-{arch}-{version}.{ext}"
 
 
 def portable_name(os_name: str, arch: str, version: str) -> str:
@@ -55,9 +57,13 @@ def render_download_section(raw_version: str) -> str:
     linux_arm = md_link("ARM64", tag, desktop_name("linux", "arm64", version, "tar.gz"))
     linux64_zip = md_link("64-bit", tag, portable_name("linux", "amd64", version))
     linux_arm_zip = md_link("ARM64", tag, portable_name("linux", "arm64", version))
-    fnos_docker = md_link("Docker (recommended; x86 and ARM)", tag, f"Octop-fnos-docker-{version}.fpk")
+    fnos_docker = md_link(
+        "Docker (recommended; x86 and ARM)", tag, f"Octop-fnos-docker-{version}.fpk"
+    )
     fnos_native = md_link("Native x86_64", tag, f"Octop-fnos-native-{version}.fpk")
-    fnos_native_arm = md_link("Native ARM64 (no Docker)", tag, f"Octop-fnos-native-arm64-{version}.fpk")
+    fnos_native_arm = md_link(
+        "Native ARM64 (no Docker)", tag, f"Octop-fnos-native-arm64-{version}.fpk"
+    )
     return "\n".join(
         [
             "",

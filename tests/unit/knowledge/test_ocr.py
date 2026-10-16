@@ -45,6 +45,31 @@ def test_personal_ocr_is_ready_only_after_detector_classifier_and_recognizer_mod
     assert status["ready"] is True
 
 
+def test_personal_ocr_ready_when_charset_is_embedded_in_recognition_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RapidOCR >=3.4 embeds the dictionary, so no sibling ``*.txt`` is present."""
+    monkeypatch.setattr(ocr, "local_ocr_deps_available", lambda: True)
+    for name in ("PP-OCRv6_det_small.onnx", "ch_ppocr_cls.onnx", "PP-OCRv6_rec_small.onnx"):
+        (tmp_path / name).write_bytes(b"model")
+    monkeypatch.setattr(ocr, "_onnx_has_embedded_charset", lambda _path: True)
+    status = ocr.personal_ocr_status(lambda _key: None, tmp_path)
+    assert status["status"] == "ready"
+    assert status["model_downloaded"] is True
+
+
+def test_personal_ocr_not_ready_without_recognizer_model(tmp_path: Path) -> None:
+    for name in ("PP-OCRv6_det_small.onnx", "ch_ppocr_cls.onnx"):
+        (tmp_path / name).write_bytes(b"model")
+    assert ocr.rapidocr_models_ready(tmp_path) is False
+
+
+def test_embedded_charset_probe_rejects_unreadable_model(tmp_path: Path) -> None:
+    broken = tmp_path / "PP-OCRv6_rec_small.onnx"
+    broken.write_bytes(b"not-an-onnx")
+    assert ocr._onnx_has_embedded_charset(broken) is False
+
+
 def test_ensure_rapidocr_models_downloads_and_verifies_model_bundle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
