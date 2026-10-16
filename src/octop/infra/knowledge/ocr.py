@@ -69,6 +69,13 @@ def _is_no_image_refusal(text: str) -> bool:
 _local_engine: Any | None = None
 _local_engine_lock = threading.Lock()
 
+# Recognition ONNX files carry their character set either as a sibling
+# ``*.txt`` file (older RapidOCR bundles) or inside the model metadata
+# (``character``).  Probing the metadata opens the model, so cache the answer
+# per file revision.
+_embedded_charset_cache: dict[tuple[str, int], bool] = {}
+_embedded_charset_lock = threading.Lock()
+
 
 def personal_ocr_root() -> Path:
     """Return the persistent model directory for the local OCR runtime."""
@@ -94,10 +101,46 @@ def _rapidocr_config_path(model_root: Path) -> Path:
     return config_path
 
 
+def _onnx_has_embedded_charset(path: Path) -> bool:
+    """Return ``True`` when a recognition ONNX embeds its character set."""
+    try:
+        revision = int(path.stat().st_mtime)
+    except OSError:
+        return False
+    key = (str(path), revision)
+    with _embedded_charset_lock:
+        cached = _embedded_charset_cache.get(key)
+    if cached is not None:
+        return cached
+    embedded = False
+    try:
+        import onnxruntime
+
+        session = onnxruntime.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        metadata = getattr(session.get_modelmeta(), "custom_metadata_map", None) or {}
+        embedded = bool(str(metadata.get("character") or "").strip())
+    except Exception:
+        # A model that cannot be opened is not usable; treat it as missing.
+        embedded = False
+    with _embedded_charset_lock:
+        _embedded_charset_cache[key] = embedded
+    return embedded
+
+
 def rapidocr_models_ready(model_root: Path | None = None) -> bool:
+    """Check that a usable detector, classifier, and recognizer are on disk."""
     root = model_root or personal_ocr_root()
     # The default Chinese detector, recognizer, and classifier are all required.
-    return len(list(root.glob("*.onnx"))) >= 3 and any(root.glob("*.txt"))
+    if not (list(root.glob("*det*.onnx")) and list(root.glob("*cls*.onnx"))):
+        return False
+    recognizers = list(root.glob("*rec*.onnx"))
+    if not recognizers:
+        return False
+    # RapidOCR >=3.4 bundles the Chinese character set inside the recognition
+    # model; older bundles ship it as a ``*.txt`` file next to the models.
+    if any(root.glob("*.txt")):
+        return True
+    return any(_onnx_has_embedded_charset(path) for path in recognizers)
 
 
 def personal_ocr_status(
