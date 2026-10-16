@@ -22,33 +22,77 @@ def test_split_tag_accepts_with_or_without_v() -> None:
     assert mod.split_tag("v0.9.31") == ("v0.9.31", "0.9.31")
 
 
-def test_download_links_use_yunmell_agent_repository_by_default() -> None:
+def test_default_repo_is_the_yunmell_fork() -> None:
     mod = _load()
-    assert mod.GITHUB_REPO == "lieren2012/Yunmell-Agent"
-    assert mod.DOWNLOAD_BASE == "https://github.com/lieren2012/Yunmell-Agent/releases/download"
+    assert mod.DEFAULT_REPO == "lieren2012/Yunmell-Agent"
+    assert mod.UPSTREAM_REPO == "TencentCloud/Octop"
 
 
-def test_render_download_section_matches_github_asset_names() -> None:
+def test_yunmell_links_match_bundled_desktop_assets() -> None:
+    """Yunmell publishes ``Yunmell-Agent-desktop-*`` installers, not ``Octop-desktop-*``."""
     mod = _load()
-    body = mod.render_download_section("0.9.31")
-    base = "https://github.com/lieren2012/Yunmell-Agent/releases/download/v0.9.31"
+    body = mod.render_download_section("1.1.1", "lieren2012/Yunmell-Agent")
+    base = "https://github.com/lieren2012/Yunmell-Agent/releases/download/v1.1.1"
+
+    # Recommended installers must exist under the Yunmell asset prefix.
+    assert f"{base}/Yunmell-Agent-desktop-windows-amd64-1.1.1.exe" in body
+    assert f"{base}/Yunmell-Agent-desktop-windows-arm64-1.1.1.exe" in body
+    assert f"{base}/Yunmell-Agent-desktop-darwin-arm64-1.1.1.dmg" in body
+    assert f"{base}/Yunmell-Agent-desktop-darwin-amd64-1.1.1.dmg" in body
+    assert f"{base}/Yunmell-Agent-desktop-linux-amd64-1.1.1.tar.gz" in body
+    assert f"{base}/Yunmell-Agent-desktop-linux-arm64-1.1.1.tar.gz" in body
+
+    # Portable zips keep the shared Octop prefix and are real assets.
+    assert f"{base}/Octop-portable-windows-amd64-1.1.1.zip" in body
+    assert f"{base}/Octop-portable-windows-arm64-1.1.1.zip" in body
+    assert f"{base}/Octop-portable-darwin-arm64-1.1.1.zip" in body
+    assert f"{base}/Octop-portable-darwin-amd64-1.1.1.zip" in body
+    assert f"{base}/Octop-portable-linux-amd64-1.1.1.zip" in body
+    assert f"{base}/Octop-portable-linux-arm64-1.1.1.zip" in body
+
+    # The fork never builds the ``Octop-desktop-*`` assets.
+    assert "Octop-desktop-" not in body
+
+
+def test_yunmell_omits_fnos_section() -> None:
+    """The Yunmell fork does not publish FnOS ``.fpk`` assets."""
+    mod = _load()
+    body = mod.render_download_section("1.1.1", "lieren2012/Yunmell-Agent")
+    assert "fnOS" not in body
+    assert ".fpk" not in body
+
+
+def test_upstream_octop_keeps_original_asset_names() -> None:
+    mod = _load()
+    body = mod.render_download_section("0.9.31", "TencentCloud/Octop")
+    base = "https://github.com/TencentCloud/Octop/releases/download/v0.9.31"
     assert f"{base}/Octop-desktop-windows-amd64-0.9.31.exe" in body
     assert f"{base}/Octop-desktop-windows-arm64-0.9.31.exe" in body
-    assert f"{base}/Octop-portable-windows-amd64-0.9.31.zip" in body
-    assert f"{base}/Octop-portable-windows-arm64-0.9.31.zip" in body
     assert f"{base}/Octop-desktop-darwin-arm64-0.9.31.dmg" in body
     assert f"{base}/Octop-desktop-darwin-amd64-0.9.31.dmg" in body
-    assert f"{base}/Octop-portable-darwin-arm64-0.9.31.zip" in body
-    assert f"{base}/Octop-portable-darwin-amd64-0.9.31.zip" in body
     assert f"{base}/Octop-desktop-linux-amd64-0.9.31.tar.gz" in body
     assert f"{base}/Octop-desktop-linux-arm64-0.9.31.tar.gz" in body
-    assert f"{base}/Octop-portable-linux-amd64-0.9.31.zip" in body
-    assert f"{base}/Octop-portable-linux-arm64-0.9.31.zip" in body
+    assert f"{base}/Octop-portable-windows-amd64-0.9.31.zip" in body
     assert f"{base}/Octop-fnos-docker-0.9.31.fpk" in body
     assert f"{base}/Octop-fnos-native-0.9.31.fpk" in body
     assert f"{base}/Octop-fnos-native-arm64-0.9.31.fpk" in body
     assert "Docker (recommended; x86 and ARM)" in body
     assert "Native x86_64" in body
     assert "Native ARM64 (no Docker)" in body
-    assert "pip install" not in body
+
+
+def test_repo_resolution_follows_github_repository_env(monkeypatch) -> None:
+    mod = _load()
+    monkeypatch.setenv("GITHUB_REPOSITORY", "lieren2012/Yunmell-Agent")
+    assert mod.resolve_repo() == "lieren2012/Yunmell-Agent"
+    assert "Yunmell-Agent-desktop-windows-amd64-1.1.1.exe" in mod.render_download_section("1.1.1")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "TencentCloud/Octop")
+    assert mod.resolve_repo() == "TencentCloud/Octop"
+    assert "Octop-desktop-windows-amd64-1.1.1.exe" in mod.render_download_section("1.1.1")
+
+
+def test_render_is_markdown_only() -> None:
+    mod = _load()
+    body = mod.render_download_section("1.1.1", "lieren2012/Yunmell-Agent")
     assert "## Downloads" in body
+    assert "pip install" not in body
