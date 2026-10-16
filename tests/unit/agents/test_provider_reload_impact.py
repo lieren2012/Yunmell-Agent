@@ -157,3 +157,62 @@ async def test_on_provider_changed_selective_skips_unrelated(
     reload_mock.assert_awaited_once()
     called_ids = set(reload_mock.await_args.args[0])
     assert called_ids == {"ref-one"}
+
+
+@pytest.mark.asyncio
+async def test_desktop_provider_sync_returns_before_slow_runtime_reload(tmp_path, monkeypatch):
+    services = _make_services(tmp_path)
+    services.repos.agent_repo.create(
+        agent_id="default", user_id=None, name="Default", default_model="test-openai/gpt-4o-mini"
+    )
+    services.repos.agent_repo.set_state("default", "running")
+    registry = _registry(services)
+    provider = services.provider_repo.get_by_name("test-openai")
+    services.provider_repo.update(provider.id, base_url="https://changed.example/v1")
+    started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def slow_reload(agent_id):
+        assert agent_id == "default"
+        started.set()
+        await release.wait()
+        finished.set()
+
+    monkeypatch.setattr(registry, "_reload_agent", slow_reload)
+    try:
+        await asyncio.wait_for(
+            registry.on_provider_changed(provider_name="test-openai", defer_reload=True),
+            timeout=1,
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert not finished.is_set()
+        providers = registry.harness_manager.shared_factory._providers
+        assert providers["test-openai"].base_url == "https://changed.example/v1"
+    finally:
+        release.set()
+        if started.is_set():
+            await asyncio.wait_for(finished.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_deferred_provider_reload_keeps_shared_concurrency_cap(tmp_path, monkeypatch):
+    services = _make_services(tmp_path)
+    registry = _registry(services)
+    registry._deferred_reload_semaphore = asyncio.Semaphore(2)
+    started = 0
+    peak = 0
+    release = asyncio.Event()
+
+    async def slow_reload(_agent_id):
+        nonlocal started, peak
+        started += 1
+        peak = max(peak, started)
+        await release.wait()
+        started -= 1
+
+    monkeypatch.setattr(registry, "_reload_agent", slow_reload)
+    for agent_id in ["a", "b", "c", "d"]:
+        registry._schedule_reload(agent_id)
+    await asyncio.sleep(0.05)
+    assert peak == 2
+    release.set()
+    await asyncio.sleep(0.05)

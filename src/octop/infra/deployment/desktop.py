@@ -583,6 +583,7 @@ class DesktopIdentityBridge:
     async def _apply_context(self, local_id: int, context: dict[str, Any]) -> None:
         services = self.server.services
         name = f"yunmell-managed-{local_id}"
+        provider_changed = False
         provider = services.provider_repo.get_by_name(name)
         metadata = context.get("default_model")
         policy = context.get("resource_policy") or {}
@@ -625,7 +626,7 @@ class DesktopIdentityBridge:
                     api_key=relay_key,
                     models_json=json.dumps(models),
                 )
-                await self.server.app_runtime.agent_registry.on_provider_changed(provider_name=name)
+                provider_changed = True
             elif (
                 provider.models_json != json.dumps(models)
                 or not provider.enabled
@@ -639,10 +640,10 @@ class DesktopIdentityBridge:
                     base_url=base,
                     api_key=relay_key,
                 )
-                await self.server.app_runtime.agent_registry.on_provider_changed(provider_name=name)
+                provider_changed = True
         elif provider is not None and provider.enabled:
             services.provider_repo.update(provider.id, enabled=False)
-            await self.server.app_runtime.agent_registry.on_provider_changed(provider_name=name)
+            provider_changed = True
         enterprise = services.enterprise_repo
         org, team = deployment(self.server)
         enterprise.upsert_member(org.organization_id, local_id, team.team_id, "member")
@@ -675,17 +676,54 @@ class DesktopIdentityBridge:
                     for kind in ["shell", "browser", "desktop", "filesystem", "network"]
                 },
             )
+        # Persist identity policies before any expert can execute. Model factory
+        # sync is immediate; graph/workspace reloads must not hold up login.
+        registry = self.server.app_runtime.agent_registry
+        if provider_changed:
+            await registry.on_provider_changed(provider_name=name, defer_reload=True)
         if metadata:
             if policy.get("max_agents") == 0:
                 return
-            agents = self.server.app_runtime.agent_registry.list_agents(local_id)
+            agents = registry.list_agents(local_id)
             if not agents:
                 from octop.infra.agents.manager import AgentCreateSpec
 
-                await self.server.app_runtime.agent_registry.create(
+                # The row is visible as "starting" before login returns. The
+                # existing bootstrap task records running/failed independently
+                # of the HTTP request and its deadline.
+                await registry.create(
                     AgentCreateSpec(
-                        name="我的智能体", user_id=local_id, default_model=f"{name}/{MODEL}"
-                    )
+                        name="我的智能体",
+                        user_id=local_id,
+                        default_model=f"{name}/{MODEL}",
+                        config={"is_default": True},
+                    ),
+                    defer_bootstrap=True,
+                )
+            else:
+                # RC1 created one "我的智能体" with this managed model but no
+                # default marker. Only upgrade the unambiguous single-expert
+                # case; ordinary experts and multi-expert installations remain
+                # untouched.
+                if len(agents) == 1:
+                    from octop.infra.agents.settings.profile import parse_config_json
+
+                    row = agents[0]
+                    config = parse_config_json(row.config_json)
+                    if (
+                        row.kind == "expert"
+                        and row.name == "我的智能体"
+                        and row.template_name is None
+                        and row.default_model == f"{name}/{MODEL}"
+                        and "is_default" not in config
+                    ):
+                        services.agent_repo.update_config(
+                            row.agent_id,
+                            config_json=json.dumps({**config, "is_default": True}),
+                        )
+                asyncio.create_task(
+                    registry.ensure_default_agent_running(local_id),
+                    name=f"restore-desktop-default-{local_id}",
                 )
 
 

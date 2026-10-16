@@ -27,7 +27,7 @@ async def test_update_status_shape(env_admin_client: Any) -> None:
     ):
         assert key in body
 
-    assert body["official_baseline_version"] == "1.0.2b7"
+    assert body["official_baseline_version"] == "1.0.2b8"
 
 
 async def test_update_check_admin_only(env_admin_client: Any) -> None:
@@ -69,7 +69,7 @@ async def test_update_channels_are_independent(env_admin_client: Any, monkeypatc
     official = await c.post("/api/update/channels/official/check", headers=auth)
     yunmell = await c.post("/api/update/channels/yunmell/check", headers=auth)
     assert official.status_code == yunmell.status_code == 200
-    assert official.json()["current_version"] == "1.0.2b7"
+    assert official.json()["current_version"] == "1.0.2b8"
     assert official.json()["latest_version"] == "1.0.2"
     assert official.json()["has_update"] is True
     assert official.json()["latest_is_prerelease"] is False

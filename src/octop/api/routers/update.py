@@ -117,7 +117,7 @@ def _present_status(
         # Keep the legacy official update fields intact for the updater, while
         # exposing both provenance lines to the desktop/header UI.  The old
         # badge used current_version directly and therefore displayed the
-        # upstream baseline (1.0.2b7) as the Yunmell product version.
+        # Keep the official upstream baseline separate from the Yunmell product version.
         "official_baseline_version": current,
         "product_version": _channel_current_version("yunmell"),
         "latest_version": latest,

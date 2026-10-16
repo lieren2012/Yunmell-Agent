@@ -20,7 +20,7 @@ type updateTransport func(*http.Request) (*http.Response, error)
 
 func (f updateTransport) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
 func testUpdateAsset(body []byte) clientReleaseAsset {
-	return testUpdateAssetForVersion(body, "1.0.11")
+	return testUpdateAssetForVersion(body, "1.1.2")
 }
 func testUpdateAssetForVersion(body []byte, version string) clientReleaseAsset {
 	digest := sha256.Sum256(body)
@@ -42,11 +42,11 @@ func testUpdater(t *testing.T, releases []clientRelease, body []byte) *clientUpd
 func TestClientUpdateSelectsOnlyConfiguredPlatformAndStableRelease(t *testing.T) {
 	body := []byte("verified Yunmell installer")
 	asset := testUpdateAsset(body)
-	u := testUpdater(t, []clientRelease{{Tag: "v9.0.0", Draft: true}, {Tag: "v2.0.0b1", Prerelease: true}, {Tag: "v1.0.11", Assets: []clientReleaseAsset{asset}}}, body)
+	u := testUpdater(t, []clientRelease{{Tag: "v9.0.0", Draft: true}, {Tag: "v1.1.2b1", Prerelease: true}, {Tag: "v1.1.2", Assets: []clientReleaseAsset{asset}}}, body)
 	if err := u.check(false); err != nil {
 		t.Fatal(err)
 	}
-	if u.snapshot().LatestVersion != "1.0.11" {
+	if u.snapshot().LatestVersion != "1.1.2" {
 		t.Fatal(u.snapshot())
 	}
 	if err := u.download(); err != nil {
@@ -66,10 +66,10 @@ func TestClientUpdateSelectsOnlyConfiguredPlatformAndStableRelease(t *testing.T)
 	}
 }
 func TestClientUpdateRejectsForeignReleaseAndMissingChecksum(t *testing.T) {
-	for _, tamper := range []func(*clientReleaseAsset){func(a *clientReleaseAsset) { a.URL = "https://example.com/installer.exe" }, func(a *clientReleaseAsset) { a.Digest = "" }, func(a *clientReleaseAsset) { a.Name = "Octop-desktop-windows-amd64-1.0.11.exe" }} {
+	for _, tamper := range []func(*clientReleaseAsset){func(a *clientReleaseAsset) { a.URL = "https://example.com/installer.exe" }, func(a *clientReleaseAsset) { a.Digest = "" }, func(a *clientReleaseAsset) { a.Name = "Octop-desktop-windows-amd64-1.1.2.exe" }} {
 		a := testUpdateAsset([]byte("package"))
 		tamper(&a)
-		u := testUpdater(t, []clientRelease{{Tag: "v1.0.11", Assets: []clientReleaseAsset{a}}}, nil)
+		u := testUpdater(t, []clientRelease{{Tag: "v1.1.2", Assets: []clientReleaseAsset{a}}}, nil)
 		if err := u.check(false); err == nil {
 			t.Fatal("untrusted/unsigned release must be rejected")
 		}
@@ -77,7 +77,7 @@ func TestClientUpdateRejectsForeignReleaseAndMissingChecksum(t *testing.T) {
 }
 func TestClientUpdateCorruptOrInterruptedDownloadPreservesLocalData(t *testing.T) {
 	asset := testUpdateAsset([]byte("expected installer"))
-	u := testUpdater(t, []clientRelease{{Tag: "v1.0.11", Assets: []clientReleaseAsset{asset}}}, []byte("bad"))
+	u := testUpdater(t, []clientRelease{{Tag: "v1.1.2", Assets: []clientReleaseAsset{asset}}}, []byte("bad"))
 	old := filepath.Join(u.directory, "local-session.json")
 	if err := os.WriteFile(old, []byte("local session"), 0o600); err != nil {
 		t.Fatal(err)
@@ -132,7 +132,7 @@ func TestClientUpdateFailedInstallerRestoresOldExecutable(t *testing.T) {
 	}
 }
 func TestClientUpdaterRejectsDowngrades(t *testing.T) {
-	u := testUpdater(t, []clientRelease{{Tag: "v1.0.9"}, {Tag: "v1.0.10b10", Prerelease: true}}, nil)
+	u := testUpdater(t, []clientRelease{{Tag: "v1.0.9"}, {Tag: "v1.1.0"}}, nil)
 	if err := u.check(false); err != nil {
 		t.Fatal(err)
 	}
@@ -145,30 +145,30 @@ func TestClientUpdaterRejectsDowngrades(t *testing.T) {
 }
 
 func TestClientUpdaterKeepsCurrentPrereleaseTrackWhenStableOnly(t *testing.T) {
-	// The installed client is 1.0.10b16. A stable-only check must not report the
-	// older 1.0.9 tag as latest, and must still offer a real b17 upgrade.
+	// The installed client is the stable 1.1.1 release. A stable-only check must
+	// not report older tags, but must offer a newer stable upgrade.
 	u := testUpdater(t, []clientRelease{
 		{Tag: "v1.0.9"},
-		{Tag: "v1.0.10b15", Prerelease: true},
+		{Tag: "v1.1.0"},
 	}, nil)
 	if err := u.check(false); err != nil {
 		t.Fatal(err)
 	}
-	if got := u.snapshot(); got.LatestVersion != "1.0.10b15" || got.HasUpdate {
+	if got := u.snapshot(); got.LatestVersion != "1.1.0" || got.HasUpdate {
 		t.Fatalf("current pre-release was treated as a downgrade: %+v", got)
 	}
 
 	body := []byte("next Yunmell installer")
-	asset := testUpdateAssetForVersion(body, "1.0.10b17")
+	asset := testUpdateAssetForVersion(body, "1.1.2")
 	u = testUpdater(t, []clientRelease{
 		{Tag: "v1.0.9"},
-		{Tag: "v1.0.10b15", Prerelease: true},
-		{Tag: "v1.0.10b17", Prerelease: true, Assets: []clientReleaseAsset{asset}},
+		{Tag: "v1.1.0"},
+		{Tag: "v1.1.2", Assets: []clientReleaseAsset{asset}},
 	}, body)
 	if err := u.check(false); err != nil {
 		t.Fatal(err)
 	}
-	if got := u.snapshot(); got.LatestVersion != "1.0.10b17" || !got.HasUpdate {
+	if got := u.snapshot(); got.LatestVersion != "1.1.2" || !got.HasUpdate {
 		t.Fatalf("newer pre-release was not selected: %+v", got)
 	}
 }
@@ -176,10 +176,10 @@ func TestClientUpdaterKeepsCurrentPrereleaseTrackWhenStableOnly(t *testing.T) {
 func TestParallelInstallerDownloadChecksRangesAndHash(t *testing.T) {
 	body := bytes.Repeat([]byte("yunmell"), (9<<20)/7)
 	asset := testUpdateAsset(body)
-	u := testUpdater(t, []clientRelease{{Tag: "v1.0.11", Assets: []clientReleaseAsset{asset}}}, nil)
+	u := testUpdater(t, []clientRelease{{Tag: "v1.1.2", Assets: []clientReleaseAsset{asset}}}, nil)
 	u.client.Transport = updateTransport(func(request *http.Request) (*http.Response, error) {
 		if request.URL.Host == "api.github.com" {
-			data, _ := json.Marshal([]clientRelease{{Tag: "v1.0.11", Assets: []clientReleaseAsset{asset}}})
+			data, _ := json.Marshal([]clientRelease{{Tag: "v1.1.2", Assets: []clientReleaseAsset{asset}}})
 			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(data)), Header: make(http.Header)}, nil
 		}
 		var start, end int

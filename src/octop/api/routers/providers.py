@@ -51,6 +51,7 @@ class ProviderCreateBody(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     extra_json: str | None = None
+    stream_usage: bool | None = None
     models: list[dict[str, Any]] | None = None
     note: str | None = None
 
@@ -60,6 +61,7 @@ class ProviderPatchBody(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     extra_json: str | None = None
+    stream_usage: bool | None = None
     models: list[dict[str, Any]] | None = None
     note: str | None = None
     enabled: bool | None = None
@@ -67,13 +69,71 @@ class ProviderPatchBody(BaseModel):
 
 # Fields that affect harness factory / agent runtime when patched.
 _PROVIDER_REHYDRATE_FIELDS = frozenset(
-    {"kind", "base_url", "api_key", "extra_json", "models", "enabled"}
+    {"kind", "base_url", "api_key", "extra_json", "stream_usage", "models", "enabled"}
 )
+
+
+def merge_stream_usage_extra(raw: str | None, value: bool | None) -> str | None:
+    if value is None:
+        return raw
+    try:
+        parsed = json.loads(raw or "{}")
+    except (TypeError, json.JSONDecodeError):
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    parsed["stream_usage"] = bool(value)
+    return json.dumps(parsed, ensure_ascii=False)
 
 
 def _patch_requires_provider_rehydrate(body: ProviderPatchBody) -> bool:
     """True when the patch touches fields that require ``on_provider_changed``."""
     return bool(body.model_fields_set & _PROVIDER_REHYDRATE_FIELDS)
+
+
+def _blank_to_none(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _provider_patch_updates(
+    body: ProviderPatchBody,
+    *,
+    current_extra_json: str | None,
+) -> dict[str, Any]:
+    """Map an explicit JSON patch onto repo kwargs.
+
+    Omitted fields are left out so they stay unchanged. ``null`` (and a blank
+    API key) is forwarded as ``None``, which clears the stored value. Revoke
+    sends ``{"api_key": null}``; treating that the same as "field absent" left
+    the key in place and the provider still looked authorized.
+
+    ``stream_usage`` is stored inside ``extra_json``. A patch that only sets
+    that flag rewrites the current blob and must not clear the API key.
+    """
+    fields = body.model_fields_set
+    updates: dict[str, Any] = {}
+    if "kind" in fields:
+        updates["kind"] = body.kind
+    if "base_url" in fields:
+        updates["base_url"] = _blank_to_none(body.base_url)
+    if "api_key" in fields:
+        updates["api_key"] = _blank_to_none(body.api_key)
+    if "extra_json" in fields or "stream_usage" in fields:
+        if "stream_usage" in fields:
+            base = body.extra_json if "extra_json" in fields else current_extra_json
+            updates["extra_json"] = merge_stream_usage_extra(base, body.stream_usage)
+        else:
+            updates["extra_json"] = body.extra_json
+    if "models" in fields:
+        updates["models_json"] = json.dumps(body.models) if body.models is not None else None
+    if "note" in fields:
+        updates["note"] = _blank_to_none(body.note)
+    if "enabled" in fields:
+        updates["enabled"] = body.enabled
+    return updates
 
 
 class ProviderTestBody(BaseModel):
@@ -225,7 +285,7 @@ async def admin_create_provider(
         kind=body.kind,
         base_url=body.base_url,
         api_key=body.api_key,
-        extra_json=body.extra_json,
+        extra_json=merge_stream_usage_extra(body.extra_json, body.stream_usage),
         models_json=models_json,
         note=body.note,
     )
@@ -244,18 +304,9 @@ async def admin_patch_provider(
     row = server.services.provider_repo.get(provider_id)
     if row is None:
         raise OctopError(ErrorCode.NOT_FOUND, "provider not found")
-    import json as _json
-
-    models_json = _json.dumps(body.models) if body.models is not None else None
     server.services.provider_repo.update(
         provider_id,
-        kind=body.kind,
-        base_url=body.base_url,
-        api_key=body.api_key,
-        extra_json=body.extra_json,
-        models_json=models_json,
-        note=body.note,
-        enabled=body.enabled,
+        **_provider_patch_updates(body, current_extra_json=row.extra_json),
     )
     if body.models is not None:
         clear_stale_pins_for_provider(

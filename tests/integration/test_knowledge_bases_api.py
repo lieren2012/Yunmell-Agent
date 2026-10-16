@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from tests.support.auth import create_user
+from tests.support.auth import create_provider, create_user
 
 
 async def test_capability_reports_unconfigured_embedding_without_waiting(env: Any) -> None:
@@ -72,11 +72,26 @@ async def test_personal_base_can_be_created_before_embedding_setup(env: Any) -> 
     assert [row["name"] for row in listed.json()] == ["我的本地资料"]
 
 
-async def test_embedding_options_require_knowledge_settings(env: Any) -> None:
+async def test_embedding_options_expose_remote_only_with_knowledge_settings(env: Any) -> None:
     client, _server, admin_auth = env
-    page_auth = await create_user(client, admin_auth, username="kb_options_user")
-    denied = await client.get("/api/knowledge-bases/embedding-options", headers=page_auth)
-    assert denied.status_code == 403, denied.text
+    provider = await create_provider(
+        client,
+        admin_auth,
+        name="enterprise-embedding",
+        models=[{"id": "text-embedding-3-small", "name": "Remote embedding", "embedding": True}],
+    )
+    page_auth = await create_user(
+        client,
+        admin_auth,
+        username="kb_options_user",
+        permissions=["knowledge_bases"],
+    )
+    personal = await client.get("/api/knowledge-bases/embedding-options", headers=page_auth)
+    assert personal.status_code == 200, personal.text
+    assert personal.json()["onnx"]
+    assert personal.json()["remote"] == []
+    assert provider["name"] not in personal.text
+    assert "text-embedding-3-small" not in personal.text
 
     settings_auth = await create_user(
         client,
@@ -86,7 +101,14 @@ async def test_embedding_options_require_knowledge_settings(env: Any) -> None:
     )
     allowed = await client.get("/api/knowledge-bases/embedding-options", headers=settings_auth)
     assert allowed.status_code == 200, allowed.text
-    assert "onnx" in allowed.json()
+    assert allowed.json()["onnx"] == personal.json()["onnx"]
+    assert allowed.json()["remote"] == [
+        {
+            "provider_id": str(provider["id"]),
+            "provider_name": provider["name"],
+            "models": [{"id": "text-embedding-3-small", "name": "Remote embedding"}],
+        }
+    ]
 
 
 async def test_enterprise_knowledge_projection_and_admin_crud_preserve_personal_scope(

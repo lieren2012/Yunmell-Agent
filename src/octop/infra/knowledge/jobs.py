@@ -14,7 +14,8 @@ from octop.infra.knowledge.ocr import optional_ocr_extractor
 from octop.infra.knowledge.params import get_advanced_settings
 from octop.infra.knowledge.parse import parse_document
 
-INDEX_CONCURRENCY = 2
+# Parsing/OCR also consumes memory; only one document should be in flight.
+INDEX_CONCURRENCY = 1
 _index_semaphore: asyncio.Semaphore | None = None
 
 
@@ -120,10 +121,7 @@ def reindex_all_documents(
                 base
                 for base in services.knowledge_repo.list_all()
                 if not base.shared
-                and (
-                    personal_owner_id is None
-                    or int(base.owner_user_id) == int(personal_owner_id)
-                )
+                and (personal_owner_id is None or int(base.owner_user_id) == int(personal_owner_id))
             ]
         )
         for base in bases:

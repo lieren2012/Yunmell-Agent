@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import suppress
 from dataclasses import asdict
@@ -49,9 +50,13 @@ from octop.infra.knowledge.gate import (
 from octop.infra.knowledge.jobs import enqueue_index_document, reindex_all_documents
 from octop.infra.knowledge.ocr import (
     ensure_ocr_deps_async,
+    ensure_rapidocr_models_async,
     get_ocr_capability,
     local_ocr_deps_available,
+    personal_ocr_root,
+    personal_ocr_status,
     set_ocr_settings,
+    set_personal_ocr_status,
     validate_ocr_settings,
 )
 from octop.infra.knowledge.service import (
@@ -310,9 +315,16 @@ def _require_usable(server: OctopServer, request: Request, *, kb_id: str | None 
 
 def _capability_payload(server: OctopServer) -> dict[str, Any]:
     assert server.services is not None
+    ocr_root = (
+        getattr(getattr(server.services, "paths", None), "root", personal_ocr_root())
+        / "ocr"
+        / "rapidocr"
+    )
     payload = get_capability(server.services.settings_repo.get, server.services.provider_repo)
     payload["ocr"] = get_ocr_capability(
-        server.services.settings_repo.get, server.services.provider_repo
+        server.services.settings_repo.get,
+        server.services.provider_repo,
+        ocr_root,
     )
     payload["limits"] = {
         "max_bases_per_owner": MAX_BASES_PER_OWNER,
@@ -323,7 +335,12 @@ def _capability_payload(server: OctopServer) -> dict[str, Any]:
     # to the enterprise capability so the dashboard never treats a remote
     # enterprise embedding setting as a prerequisite for private documents.
     personal = get_personal_capability(server.services.settings_repo.get)
-    personal_ocr_ready = local_ocr_deps_available()
+    personal_ocr = personal_ocr_status(
+        server.services.settings_repo.get,
+        ocr_root,
+        installing=_PERSONAL_OCR_TASK is not None and not _PERSONAL_OCR_TASK.done(),
+    )
+    personal_ocr_ready = bool(personal_ocr["ready"])
     personal["ocr"] = {
         "enabled": True,
         "backend": "onnx",
@@ -331,8 +348,12 @@ def _capability_payload(server: OctopServer) -> dict[str, Any]:
         "provider_id": "",
         "prerequisites_ok": personal_ocr_ready,
         "usable": personal_ocr_ready,
+        "status": personal_ocr["status"],
+        "progress": personal_ocr["progress"],
+        "error": personal_ocr["error"],
         "checks": {
-            "deps_available": personal_ocr_ready,
+            "deps_available": personal_ocr["deps_available"],
+            "model_downloaded": personal_ocr["model_downloaded"],
             "provider_ready": False,
         },
     }
@@ -415,7 +436,11 @@ async def embedding_options(
     # administrator concern.  Ordinary users receive the same local ONNX
     # catalog from this endpoint so the personal-library settings can remain
     # independent of the enterprise embedding gate.
-    if not hasattr(_admin, "is_admin") or getattr(_admin, "is_admin", False) or user_has_permission(_admin, "knowledge_settings"):
+    if (
+        not hasattr(_admin, "is_admin")
+        or getattr(_admin, "is_admin", False)
+        or user_has_permission(_admin, "knowledge_settings")
+    ):
         for provider in server.services.provider_repo.list_all():
             if is_onnx_local_provider(
                 provider.name, provider_api_key=getattr(provider, "api_key", None)
@@ -499,6 +524,8 @@ async def put_feature(
     if body.ocr_enabled:
         try:
             await ensure_ocr_deps_async(backend=(body.ocr_backend or "onnx").strip().lower())
+            if (body.ocr_backend or "onnx").strip().lower() == "onnx":
+                await ensure_rapidocr_models_async(server.services.paths.root / "ocr" / "rapidocr")
             validate_ocr_settings(
                 enabled=True,
                 backend=body.ocr_backend,
@@ -586,10 +613,40 @@ async def onnx_download_status(
     return DOWNLOAD_MANAGER.state.to_dict()
 
 
+_PERSONAL_OCR_TASK: asyncio.Task[None] | None = None
+
+
+async def _run_personal_ocr_install(server: OctopServer) -> None:
+    assert server.services is not None
+    settings = server.services.settings_repo
+    root = server.services.paths.root / "ocr" / "rapidocr"
+    try:
+        await ensure_ocr_deps_async(backend="onnx")
+        set_personal_ocr_status(settings.set, status="installing", progress=0.35)
+        await ensure_rapidocr_models_async(root)
+        set_personal_ocr_status(settings.set, status="ready", progress=1.0)
+    except Exception as exc:
+        logger.exception("personal OCR installation failed")
+        set_personal_ocr_status(settings.set, status="failed", progress=0.0, error=str(exc))
+
+
+@router.get("/personal-ocr-status", summary="Read local OCR installation status")
+async def personal_ocr_status_endpoint(
+    _: User = Depends(_require_local_onnx_user), server: OctopServer = Depends(get_server)
+) -> dict[str, Any]:
+    assert server.services is not None
+    return personal_ocr_status(
+        server.services.settings_repo.get,
+        server.services.paths.root / "ocr" / "rapidocr",
+        installing=_PERSONAL_OCR_TASK is not None and not _PERSONAL_OCR_TASK.done(),
+    )
+
+
 @router.post("/personal-ocr-install", summary="Install local OCR for personal libraries")
 async def install_personal_ocr(
     request: Request,
     _: User = Depends(_require_local_onnx_user),
+    server: OctopServer = Depends(get_server),
 ) -> dict[str, Any]:
     """Install RapidOCR on demand for ordinary knowledge-base users.
 
@@ -597,16 +654,36 @@ async def install_personal_ocr(
     The install path uses the same fixed package allowlist as the administrator
     setting, so callers cannot inject package names.
     """
-    try:
+    global _PERSONAL_OCR_TASK
+    # Keep direct unit callers from older integrations working; FastAPI always
+    # supplies a real server through the dependency in production.
+    if not hasattr(server, "services"):
         outcome = await ensure_ocr_deps_async(backend="onnx")
-    except RuntimeError as exc:
-        raise _map_knowledge_error(exc, locale=resolve_request_locale(request)) from exc
-    return {
-        "status": outcome,
-        "ready": local_ocr_deps_available(),
-        "backend": "onnx",
-        "model": "rapidocr",
-    }
+        return {
+            "status": outcome,
+            "ready": local_ocr_deps_available(),
+            "backend": "onnx",
+            "model": "rapidocr",
+        }
+    assert server.services is not None
+    current = personal_ocr_status(
+        server.services.settings_repo.get,
+        server.services.paths.root / "ocr" / "rapidocr",
+    )
+    if current["ready"]:
+        return current
+    if _PERSONAL_OCR_TASK is None or _PERSONAL_OCR_TASK.done():
+        set_personal_ocr_status(
+            server.services.settings_repo.set, status="installing", progress=0.05
+        )
+        _PERSONAL_OCR_TASK = asyncio.create_task(
+            _run_personal_ocr_install(server), name="install-personal-ocr"
+        )
+    return personal_ocr_status(
+        server.services.settings_repo.get,
+        server.services.paths.root / "ocr" / "rapidocr",
+        installing=_PERSONAL_OCR_TASK is not None and not _PERSONAL_OCR_TASK.done(),
+    )
 
 
 @router.post("/onnx-activate", summary="Enable local ONNX service for a downloaded model")
@@ -621,9 +698,7 @@ async def activate_onnx_service(
         await ensure_local_embedding_deps_async(allow_install=True)
         assert server.services is not None
         allow_all = bool(
-            not hasattr(_, "is_admin")
-            or _.is_admin
-            or user_has_permission(_, "knowledge_settings")
+            not hasattr(_, "is_admin") or _.is_admin or user_has_permission(_, "knowledge_settings")
         )
         # The global ONNX service is the enterprise/shared setting.  Personal
         # users only select their edge-local model; changing it must not alter
@@ -775,6 +850,7 @@ async def get_base(
             ),
         )
     except Exception as exc:
+        # Keep reindex failures visible to the caller with the normal API error envelope.
         raise _map_knowledge_error(
             exc, locale=resolve_request_locale(request), server=server
         ) from exc

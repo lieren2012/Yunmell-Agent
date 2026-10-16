@@ -409,6 +409,10 @@ class AgentManager:
         self._history_backfills: dict[str, asyncio.Event] = {}
         self._reload_dirty: set[str] = set()
         self._reload_worker_running: dict[str, bool] = {}
+        # Deferred provider reloads use one shared cap as well; desktop login
+        # must return promptly without allowing every impacted expert to rebuild
+        # its workspace at once.
+        self._deferred_reload_semaphore = asyncio.Semaphore(_PROVIDER_RELOAD_CONCURRENCY)
         self._bootstrap_graph_refresh_pending: set[str] = set()
         self._default_recovery_users: set[int] = set()
         # Chat user id used to resolve connectors when agent.user_id is NULL (shared agents).
@@ -1617,12 +1621,15 @@ class AgentManager:
         *,
         provider_name: str | None = None,
         active_model_changed: bool = False,
+        defer_reload: bool = False,
     ) -> None:
         """Sync harness factory from DB, then reload impacted agents (awaited).
 
         When *provider_name* or *active_model_changed* is set, only the impact set
         is rebuilt. With neither set (backup restore, OAuth, unknown), all enabled
         agents are rebuilt in parallel.
+        Desktop login uses ``defer_reload`` to sync the model factory now but
+        reuse background reload workers for slow workspace/graph initialization.
         """
         if self._harness_manager is None:
             return
@@ -1634,12 +1641,15 @@ class AgentManager:
         )
         if self._harness_manager.shared_factory is None:
             return
-        await self._reload_agents(
-            self._provider_reload_impact_ids(
-                provider_name=provider_name,
-                active_model_changed=active_model_changed,
-            )
+        agent_ids = self._provider_reload_impact_ids(
+            provider_name=provider_name,
+            active_model_changed=active_model_changed,
         )
+        if defer_reload:
+            for agent_id in agent_ids:
+                self._schedule_reload(agent_id)
+        else:
+            await self._reload_agents(agent_ids)
 
     # ------------------------------------------------------------------
     # Connectors & MCP — OAuth refresh and pre-chat tool loading
@@ -3098,7 +3108,8 @@ class AgentManager:
             while agent_id in self._reload_dirty:
                 self._reload_dirty.discard(agent_id)
                 try:
-                    await self._reload_agent(agent_id)
+                    async with self._deferred_reload_semaphore:
+                        await self._reload_agent(agent_id)
                 except Exception:
                     logger.exception("Background reload failed for agent %s", agent_id)
                 if agent_id not in self._reload_dirty:

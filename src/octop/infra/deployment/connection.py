@@ -57,10 +57,16 @@ def management_address() -> str:
     if path.exists():
         try:
             settings = json.loads(path.read_text(encoding="utf-8"))
-            value = settings.get("controlPlaneUrl") if isinstance(settings, dict) else None
-            if value is not None and not isinstance(value, str):
+            if not isinstance(settings, dict):
                 raise ValueError
-            return normalize_address(value) if value else ""
+            # Older desktop settings may contain only port/locale. In that
+            # case the shell supplies its default in the launch environment;
+            # an explicit saved empty value must still mean "disconnected".
+            if "controlPlaneUrl" in settings:
+                value = settings["controlPlaneUrl"]
+                if value is not None and not isinstance(value, str):
+                    raise ValueError
+                return normalize_address(value) if value else ""
         except (ValueError, OSError, OctopError):
             raise OctopError(
                 ErrorCode.INTERNAL_ERROR, "连接设置文件无效，请更换服务地址", status=503

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +20,54 @@ def test_ocr_disabled_by_default() -> None:
     assert capability["enabled"] is False
     assert capability["backend"] == "onnx"
     assert capability["usable"] is False
+
+
+def test_personal_ocr_is_not_ready_when_only_python_packages_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ocr, "local_ocr_deps_available", lambda: True)
+    status = ocr.personal_ocr_status(lambda _key: None, tmp_path)
+    assert status["status"] == "not_installed"
+    assert status["ready"] is False
+    assert status["deps_available"] is True
+    assert status["model_downloaded"] is False
+
+
+def test_personal_ocr_is_ready_only_after_detector_classifier_and_recognizer_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ocr, "local_ocr_deps_available", lambda: True)
+    for name in ("det.onnx", "cls.onnx", "rec.onnx"):
+        (tmp_path / name).write_bytes(b"model")
+    (tmp_path / "rec_keys.txt").write_text("中\n", encoding="utf-8")
+    status = ocr.personal_ocr_status(lambda _key: None, tmp_path)
+    assert status["status"] == "ready"
+    assert status["ready"] is True
+
+
+def test_ensure_rapidocr_models_downloads_and_verifies_model_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_dir = tmp_path / "rapidocr_pkg"
+    package_dir.mkdir()
+    (package_dir / "config.yaml").write_text(
+        "Global:\n    model_root_dir: null\n", encoding="utf-8"
+    )
+    fake = types.ModuleType("rapidocr")
+    fake.__file__ = str(package_dir / "__init__.py")
+
+    def download(config_path: str) -> None:
+        text = Path(config_path).read_text(encoding="utf-8")
+        assert tmp_path.as_posix() in text
+        root = Path(config_path).parent
+        for name in ("det.onnx", "cls.onnx", "rec.onnx"):
+            (root / name).write_bytes(b"model")
+        (root / "rec_keys.txt").write_text("中文", encoding="utf-8")
+
+    fake.download_models = download  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "rapidocr", fake)
+    assert ocr.ensure_rapidocr_models(tmp_path) == "installed"
+    assert ocr.rapidocr_models_ready(tmp_path)
 
 
 def test_disabled_unconfigured_ocr_does_not_probe_optional_runtime(

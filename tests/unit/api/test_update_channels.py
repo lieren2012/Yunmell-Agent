@@ -9,7 +9,7 @@ from octop.api.routers import update
 def test_yunmell_version_never_becomes_official_baseline(monkeypatch):
     monkeypatch.setattr(update, "get_local_version", lambda: "9.8.7")
     monkeypatch.setenv("OCTOP_OFFICIAL_VERSION", "9.8.7")
-    assert update._channel_current_version("official") == "1.0.2b7"
+    assert update._channel_current_version("official") == "1.0.2b8"
     assert update._channel_current_version("yunmell") == "9.8.7"
     assert update._channel_payload("official")["last_check_time"] is None
 

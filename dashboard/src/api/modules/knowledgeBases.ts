@@ -33,6 +33,7 @@ export interface KnowledgeCapability {
     usable: boolean;
     checks: {
       deps_available: boolean;
+      model_downloaded?: boolean;
       provider_ready: boolean;
     };
   };
@@ -61,6 +62,9 @@ export interface KnowledgeCapability {
       enabled?: boolean;
       backend?: "onnx" | "remote";
       model?: string | null;
+      status?: "not_installed" | "installing" | "ready" | "failed";
+      progress?: number;
+      error?: string | null;
       deps_available?: boolean;
       usable?: boolean;
       prerequisites_ok?: boolean;
@@ -284,13 +288,27 @@ export const knowledgeBasesApi = {
 
   installPersonalOcr: () =>
     request<{
-      status: string;
+      status: "not_installed" | "installing" | "ready" | "failed";
+      progress?: number;
+      error?: string | null;
       ready: boolean;
       backend: "onnx";
       model: "rapidocr";
     }>("/knowledge-bases/personal-ocr-install", {
       method: "POST",
     }),
+
+  getPersonalOcrStatus: () =>
+    request<{
+      status: "not_installed" | "installing" | "ready" | "failed";
+      progress: number;
+      error?: string | null;
+      ready: boolean;
+      deps_available: boolean;
+      model_downloaded: boolean;
+      backend: "onnx";
+      model: "rapidocr";
+    }>("/knowledge-bases/personal-ocr-status"),
 
   testOnnx: (model: string) =>
     request<{
@@ -466,3 +484,4 @@ export const knowledgeBasesApi = {
       },
     ),
 };
+
