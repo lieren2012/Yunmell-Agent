@@ -47,7 +47,11 @@ from octop.infra.knowledge.gate import (
     set_feature_enabled,
     set_personal_embedding_model,
 )
-from octop.infra.knowledge.jobs import enqueue_index_document, reindex_all_documents
+from octop.infra.knowledge.jobs import (
+    enqueue_index_document,
+    reindex_all_documents,
+    retry_failed_index_jobs,
+)
 from octop.infra.knowledge.ocr import (
     ensure_ocr_deps_async,
     ensure_rapidocr_models_async,
@@ -730,8 +734,18 @@ async def activate_onnx_service(
         ) from exc
     assert server.services is not None
     payload = status_payload(server.services.settings_repo.get, DOWNLOAD_MANAGER.state)
+    # Documents that failed before a model was usable are now retryable: the
+    # parser, OCR, and embedding prerequisites this model provides are present.
+    retried_failed = 0
+    if getattr(server.services, "knowledge_repo", None) is not None:
+        retried_failed = retry_failed_index_jobs(
+            server.services,
+            personal_only=not allow_all,
+            personal_owner_id=getattr(_, "id", None),
+        )
     payload["personal_model"] = personal_model
     payload["reindex_enqueued"] = reindex_enqueued
+    payload["retried_failed"] = retried_failed
     return payload
 
 

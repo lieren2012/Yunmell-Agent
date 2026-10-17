@@ -6,6 +6,7 @@ export interface DeploymentInfo {
   name: string;
   registration_open: boolean;
   review_required: boolean;
+  email_required?: boolean;
 }
 export interface ConnectionInfo { desktop: boolean; address: string; management_only?: boolean; }
 export interface RegistrationStatus {
@@ -20,7 +21,31 @@ export const deploymentApi = {
     ...timeout(), method: "PUT", body: JSON.stringify({ address }),
   }),
   status: () => request<RegistrationStatus>("/auth/deployment/registration/status", timeout()),
-  register: (body: { username: string; password: string; display_name?: string; email?: string }) =>
+  sendRegisterCode: (email: string) =>
+    request<{ sent: boolean; expires_in: number }>("/auth/deployment/register/email-code", {
+      ...timeout(),
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+  sendResetCode: (email: string) =>
+    request<{ sent: boolean; expires_in: number }>("/auth/password-reset/email-code", {
+      ...timeout(),
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+  resetPassword: (body: { email: string; code: string; new_password: string }) =>
+    request<void>("/auth/password-reset", {
+      ...timeout(),
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  register: (body: {
+    username: string;
+    password: string;
+    display_name?: string;
+    email: string;
+    email_code?: string;
+  }) =>
     request<RegistrationStatus>("/auth/deployment/register", { ...timeout(), method: "POST", body: JSON.stringify(body) }),
 };
 export function enrollmentError(error: unknown): string {

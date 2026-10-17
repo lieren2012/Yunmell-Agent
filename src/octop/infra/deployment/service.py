@@ -50,11 +50,16 @@ def deployment(server: Any) -> tuple[Any, Any]:
 
 def public_info(server: Any) -> dict[str, Any]:
     organization, _ = deployment(server)
+    from octop.infra.auth.email_verification import load_smtp_config  # noqa: PLC0415
+
+    smtp = load_smtp_config(server.services.settings_repo.get, server.services.secret_repo)
     return {
         "organization_id": organization.organization_id,
         "name": organization.name,
         "registration_open": organization.registration_open,
         "review_required": organization.registration_review_required,
+        # When email delivery is configured the recovery address is mandatory.
+        "email_required": bool(smtp.enabled),
     }
 
 

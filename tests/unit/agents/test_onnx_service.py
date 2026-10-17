@@ -47,6 +47,43 @@ def test_ui_progress_from_bytes_is_byte_fraction() -> None:
     assert _ui_progress_from_bytes(50, 0) is None
 
 
+@pytest.mark.anyio
+async def test_start_download_returns_immediately_while_deps_install(monkeypatch) -> None:
+    """Dependency installation must not block the HTTP request.
+
+    Previously it ran inline, so the dashboard's 15s request timeout fired while
+    the install continued; the retry then failed with "another download".
+    """
+    from octop.infra.agents.providers import onnx_service as mod
+
+    release = mod.asyncio.Event()
+    started = mod.asyncio.Event()
+
+    async def slow_deps(**_kwargs):
+        started.set()
+        await release.wait()
+
+    def fake_download(_self: object, _name: str) -> None:
+        return None
+
+    monkeypatch.setattr(mod, "is_model_downloaded", lambda _name: False)
+    monkeypatch.setattr(mod, "ensure_local_embedding_deps_async", slow_deps)
+    monkeypatch.setattr(OnnxDownloadManager, "_download_sync", fake_download)
+
+    mgr = OnnxDownloadManager()
+    first = await mod.asyncio.wait_for(mgr.start_download("BAAI/bge-small-zh-v1.5"), timeout=0.5)
+    assert first.status == OnnxDownloadStatus.DOWNLOADING
+    # A repeat request while running must not raise; it returns the same task.
+    second = await mod.asyncio.wait_for(mgr.start_download("BAAI/bge-small-zh-v1.5"), timeout=0.5)
+    assert second.task_id == first.task_id
+    assert second.status == OnnxDownloadStatus.DOWNLOADING
+    release.set()
+    await mod.asyncio.wait_for(started.wait(), timeout=5)
+    if mgr._task is not None:
+        await mgr._task
+    assert mgr.state.status == OnnxDownloadStatus.DONE
+
+
 def test_download_sync_reports_tqdm_bytes(monkeypatch, tmp_path) -> None:
     from octop.infra.agents.providers import onnx_service as mod
 
