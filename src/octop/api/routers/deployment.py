@@ -8,7 +8,18 @@ from fastapi import APIRouter, Cookie, Depends, Request, Response
 from pydantic import BaseModel, Field
 
 from octop.api.deps import current_user, get_server, require_admin, require_permission
-from octop.api.routers.auth import EnterpriseRegistrationBody, LoginBody, login
+from octop.api.routers.auth import (
+    EmailCodeBody,
+    EnterpriseRegistrationBody,
+    LoginBody,
+    _send_login_code,
+    login,
+)
+from octop.infra.auth.email_verification import (
+    EmailVerificationError,
+    load_smtp_config,
+    verify_code,
+)
 from octop.infra.db.repos.deployment import DeploymentRepo
 from octop.infra.deployment.service import (
     deployment,
@@ -19,6 +30,7 @@ from octop.infra.deployment.service import (
 )
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.knowledge.service import KnowledgeService
+from octop.infra.users.email import normalize_email
 from octop.infra.users.identity import User
 
 router = APIRouter()
@@ -140,6 +152,21 @@ async def info(server: Any = Depends(get_server)) -> dict[str, Any]:
 
 
 @router.post(
+    "/deployment/register/email-code",
+    summary="Send the registration verification code",
+)
+async def register_email_code(
+    body: EmailCodeBody, server: Any = Depends(get_server)
+) -> dict[str, Any]:
+    organization, _team = deployment(server)
+    if not organization.registration_open:
+        raise OctopError(ErrorCode.FORBIDDEN, "该企业暂未开放注册，请联系管理员", status=403)
+    if normalize_email(body.email) is None:
+        raise OctopError(ErrorCode.EMAIL_INVALID, "请填写有效邮箱", status=400)
+    return await _send_login_code(server, "register", body.email)
+
+
+@router.post(
     "/deployment/register", status_code=202, summary="Register with this service's enterprise"
 )
 async def register(
@@ -154,6 +181,33 @@ async def register(
     username = body.username.strip()
     if not username:
         raise OctopError(ErrorCode.SLASH_BAD_ARGS, "请填写账号", status=400)
+    email = normalize_email(body.email)
+    if email is None:
+        raise OctopError(ErrorCode.EMAIL_INVALID, "请填写有效邮箱", status=400)
+    # When the administrator configured SMTP, prove ownership of the recovery
+    # address before the account exists.  Without SMTP the admin review is the
+    # only gate, matching an on-prem deployment with no mail relay.
+    smtp = load_smtp_config(server.services.settings_repo.get, server.services.secret_repo)
+    if smtp.enabled:
+        if not body.email_code:
+            raise OctopError(
+                ErrorCode.AUTH_FAILED,
+                "请填写邮箱验证码",
+                details={"email_error": "EMAIL_CODE_REQUIRED"},
+                status=400,
+            )
+        try:
+            verify_code(
+                server.services.settings_repo.get,
+                server.services.settings_repo.set,
+                "register",
+                email,
+                body.email_code,
+            )
+        except EmailVerificationError as exc:
+            raise OctopError(
+                ErrorCode.AUTH_FAILED, str(exc), details={"email_error": exc.code}, status=400
+            ) from exc
     from octop.infra.db.repos.user_roles import seeded_user_role_assignment
 
     assignment = seeded_user_role_assignment(server.services.db)
@@ -162,7 +216,7 @@ async def register(
         password=body.password,
         role=assignment[0] if assignment else "user",
         display_name=body.display_name,
-        email=body.email,
+        email=email,
         pending_approval=True,
     )
     if assignment:

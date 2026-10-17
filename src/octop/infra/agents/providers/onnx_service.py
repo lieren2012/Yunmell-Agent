@@ -516,7 +516,6 @@ class OnnxDownloadManager:
 
     async def start_download(self, model_name: str) -> OnnxDownloadState:
         model_name = assert_catalog_model(model_name)
-        await ensure_local_embedding_deps_async(allow_install=True)
         if is_model_downloaded(model_name):
             self._set(
                 status=OnnxDownloadStatus.DONE,
@@ -527,13 +526,27 @@ class OnnxDownloadManager:
             )
             return self.state
 
-        task_id = uuid.uuid4().hex
+        # Dependencies can take minutes to install.  Starting them inline made
+        # the HTTP request outlive the browser's request timeout, and the retry
+        # then hit "another ONNX download is already running" because the state
+        # was already DOWNLOADING.  Both belong to the background task.
+        #
+        # A repeat request is idempotent: the UI polls the shared status, so
+        # returning the in-flight task is both correct and race-free.
         with self._lock:
             if self._state.status in {
                 OnnxDownloadStatus.DOWNLOADING,
                 OnnxDownloadStatus.LOADING,
             }:
-                raise RuntimeError("another ONNX download is already running")
+                return OnnxDownloadState(
+                    status=self._state.status,
+                    progress=self._state.progress,
+                    error=self._state.error,
+                    model_name=self._state.model_name,
+                    task_id=self._state.task_id,
+                    updated_at=self._state.updated_at,
+                )
+            task_id = uuid.uuid4().hex
             self._state.status = OnnxDownloadStatus.DOWNLOADING
             self._state.progress = 0.0
             self._state.error = None
@@ -545,6 +558,7 @@ class OnnxDownloadManager:
 
         async def _run() -> None:
             try:
+                await ensure_local_embedding_deps_async(allow_install=True)
                 await loop.run_in_executor(None, self._download_sync, model_name)
                 self._set(
                     status=OnnxDownloadStatus.DONE,

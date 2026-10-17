@@ -3,6 +3,7 @@ import { Alert, Button, Card, Form, Input, InputNumber, List, Select, Space, Swi
 import PageShell from "../../../layouts/PageShell";
 import UsersListPanel from "../Users/UsersListPanel";
 import RolesPanel from "../Users/RolesPanel";
+import EmailSettingsCard from "./EmailSettingsCard";
 import { request } from "../../../api/request";
 import { enterpriseApi, type RegistrationApplication, type TeamControls, type TeamQuota } from "../../../api/modules/enterprise";
 import { deploymentApi, enrollmentError, type DeploymentInfo } from "../../../api/modules/deployment";
@@ -53,6 +54,7 @@ export default function SingleDeploymentPage() {
       <Select aria-label="企业默认模型" showSearch style={{ width: "100%" }} value={model || undefined} onChange={setModel} placeholder="从统一模型管理选择" options={providers.filter(provider => provider.enabled).flatMap(provider => provider.models.filter(item => item.enabled !== false).map(item => ({ value: `${provider.name}/${item.id}`, label: `${provider.name} / ${item.name || item.id}` })))} />
       <Button style={{ marginTop: 12 }} loading={busy} disabled={!info || !model} onClick={() => void run(() => { const [provider, ...parts] = model.split("/"); return enterpriseApi.saveDefaultModel(info!.organization_id, provider, parts.join("/")); })}>保存企业默认模型</Button>
     </Card>}
+    <EmailSettingsCard />
     <Card title="默认团队配额与本机权限"><Space wrap>
       <Select value={quota.period} onChange={period => setQuota({ ...quota, period })} options={[{ value: "monthly", label: "每月" }, { value: "weekly", label: "每周" }, { value: "daily", label: "每日" }]} />
       {(["token_limit", "request_limit", "concurrency_limit"] as const).map((key, index) => <InputNumber key={key} min={0} aria-label={["Token 配额", "请求次数", "并发数量"][index]} placeholder={["Token 不限", "请求不限", "并发不限"][index]} value={quota[key]} onChange={value => setQuota({ ...quota, [key]: value })} />)}
@@ -72,3 +74,4 @@ export default function SingleDeploymentPage() {
     <Tabs items={[{ key: "settings", label: "企业设置", children: settings }, { key: "members", label: "成员管理", children: <UsersListPanel /> }, { key: "approvals", label: `注册审核${applications.length ? ` (${applications.length})` : ""}`, children: approvals }, { key: "roles", label: "角色权限", children: <RolesPanel /> }]} />
   </PageShell>;
 }
+
