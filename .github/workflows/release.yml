@@ -142,6 +142,19 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
 
+      # softprops/action-gh-release can reuse a release created concurrently
+      # by another workflow without applying body_path to that existing
+      # release. Explicitly edit the notes after the action so the release
+      # remains complete even if an older desktop workflow wins the race.
+      - name: Ensure release notes are published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release edit "${GITHUB_REF_NAME}" \
+            --repo "${{ github.repository }}" \
+            --notes-file .release-notes.md
+
   # workflow_run / release:published are unreliable when Release itself was
   # started via GITHUB_TOKEN workflow_dispatch (Auto Tag). Explicitly cascade.
   #

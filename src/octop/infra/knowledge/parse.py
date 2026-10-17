@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import zipfile
 from collections.abc import Iterable
 from html.parser import HTMLParser
 from pathlib import Path
@@ -27,6 +28,66 @@ _PLAIN_TEXT_SUFFIXES = {
 _DOCX_FALLBACK_TAG = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
 _DOCX_HTML_TYPES = {"application/xhtml+xml", "text/html"}
 _DOCX_MAIN_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+class KnowledgeDocumentParseError(ValueError):
+    """A user-facing parse failure for a supported knowledge document.
+
+    The original Octop knowledge flow stores the exception text in the document
+    row and the dashboard displays that value as the failed-document reason.
+    Keeping a small, stable exception type lets Office parser failures expose a
+    useful recovery instruction instead of leaking implementation details from
+    ``openpyxl`` or ``python-pptx``.
+    """
+
+    def __init__(self, message: str, *, format_name: str) -> None:
+        super().__init__(message)
+        self.format_name = format_name
+
+
+def _office_parse_error(
+    format_name: str, extension: str, exc: Exception
+) -> KnowledgeDocumentParseError:
+    """Convert Office-library failures into actionable document messages."""
+    if isinstance(exc, ImportError):
+        dependency = "openpyxl" if format_name == "Excel" else "python-pptx"
+        return KnowledgeDocumentParseError(
+            f"{format_name} 文件解析依赖未安装（{dependency}），请联系管理员安装后重试。",
+            format_name=format_name,
+        )
+    if isinstance(exc, FileNotFoundError):
+        return KnowledgeDocumentParseError(
+            f"{format_name} 原始文件不存在，请重新上传文档后再试。",
+            format_name=format_name,
+        )
+    if isinstance(exc, PermissionError):
+        return KnowledgeDocumentParseError(
+            f"无法读取 {format_name} 文件，请确认文件权限后重新上传。",
+            format_name=format_name,
+        )
+    if isinstance(exc, (zipfile.BadZipFile, KeyError, IndexError, ValueError, OSError)) or (
+        exc.__class__.__name__
+        in {"InvalidFileException", "InvalidPackageError", "PackageNotFoundError"}
+    ):
+        return KnowledgeDocumentParseError(
+            f"{format_name} 文件无法解析：文件可能已损坏、格式不受支持或受到密码保护，"
+            f"请重新导出为 {extension} 后再试。",
+            format_name=format_name,
+        )
+    return KnowledgeDocumentParseError(
+        f"{format_name} 文件解析失败，请重新导出为 {extension} 后再试。",
+        format_name=format_name,
+    )
+
+
+def empty_document_text_message(path: Path) -> str:
+    """Return a clear reason when a document contains no extractable text."""
+    suffix = path.suffix.lower()
+    if suffix in {".xlsx", ".xlsm"}:
+        return "Excel 文件中没有可提取的文本，请确认工作表包含文字或数字后重试。"
+    if suffix == ".pptx":
+        return "PowerPoint 文件中没有可提取的文本，请确认幻灯片包含文字后重试。"
+    return "知识库文档中没有可提取的文本，请补充内容后重试。"
 
 
 def parse_document(path: Path, *, ocr: OcrExtractor | None = None) -> str:
@@ -56,14 +117,17 @@ def parse_document(path: Path, *, ocr: OcrExtractor | None = None) -> str:
     if suffix == ".docx":
         return _parse_docx(path)
     if suffix == ".pptx":
-        from pptx import Presentation
+        try:
+            from pptx import Presentation
 
-        return "\n".join(
-            shape.text
-            for slide in Presentation(str(path)).slides
-            for shape in slide.shapes
-            if hasattr(shape, "text") and shape.text
-        )
+            return "\n".join(
+                shape.text
+                for slide in Presentation(str(path)).slides
+                for shape in slide.shapes
+                if hasattr(shape, "text") and shape.text
+            )
+        except Exception as exc:
+            raise _office_parse_error("PowerPoint", ".pptx", exc) from exc
     if suffix in {".xlsx", ".xlsm"}:
         return _parse_xlsx(path)
     if suffix == ".xls":
@@ -257,18 +321,25 @@ def _parse_delimited(path: Path, *, delimiter: str) -> str:
 
 
 def _parse_xlsx(path: Path) -> str:
-    from openpyxl import load_workbook
-
-    workbook = load_workbook(path, read_only=True, data_only=True)
     try:
+        from openpyxl import load_workbook
+    except Exception as exc:
+        raise _office_parse_error("Excel", ".xlsx/.xlsm", exc) from exc
+
+    workbook = None
+    try:
+        workbook = load_workbook(path, read_only=True, data_only=True)
         parts: list[str] = []
         for sheet in workbook.worksheets:
             text = _sheet_text(str(sheet.title), sheet.iter_rows(values_only=True))
             if text:
                 parts.append(text)
         return "\n\n".join(parts)
+    except Exception as exc:
+        raise _office_parse_error("Excel", ".xlsx/.xlsm", exc) from exc
     finally:
-        workbook.close()
+        if workbook is not None:
+            workbook.close()
 
 
 def _parse_xls(path: Path) -> str:

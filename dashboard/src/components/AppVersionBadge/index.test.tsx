@@ -9,7 +9,7 @@ const userCan = vi.hoisted(() => vi.fn(() => false));
 vi.mock("../../hooks/useUpdateStatus", () => ({
   useUpdateStatus: () => ({
     status: {
-      current_version: "1.0.2b8",
+      current_version: "1.0.2b9",
       product_version: "1.0.10b13",
       latest_version: "1.0.10b14",
       has_update: true,

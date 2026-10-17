@@ -3,8 +3,8 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 
 const status = vi.hoisted(() => ({
-  current_version: "1.0.2b8",
-  official_baseline_version: "1.0.2b8",
+  current_version: "1.0.2b9",
+  official_baseline_version: "1.0.2b9",
   product_version: "1.0.10b12",
 }));
 
@@ -38,8 +38,8 @@ it("shows the Yunmell product version and official baseline separately", () => {
   );
 
   expect(screen.getByText("v1.0.10b12")).toBeInTheDocument();
-  expect(screen.getByText("官方基线 v1.0.2b8")).toBeInTheDocument();
+  expect(screen.getByText("官方基线 v1.0.2b9")).toBeInTheDocument();
   expect(
-    screen.getByLabelText("云迈产品 v1.0.10b12（官方基线 v1.0.2b8）"),
+    screen.getByLabelText("云迈产品 v1.0.10b12（官方基线 v1.0.2b9）"),
   ).toBeInTheDocument();
 });

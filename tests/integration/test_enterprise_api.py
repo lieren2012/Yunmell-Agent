@@ -128,3 +128,60 @@ async def test_deleting_user_removes_enterprise_membership(env):
     )
     assert members.status_code == 200
     assert all(row["user_id"] != user_id for row in members.json())
+
+
+async def test_enterprise_smtp_config_keeps_secret_private_and_checks_enabled(env, monkeypatch):
+    client, _, admin_auth = env
+    organization = await client.post(
+        "/api/admin/enterprise/organizations",
+        headers=admin_auth,
+        json={"name": "SMTP 配置测试企业"},
+    )
+    assert organization.status_code == 201
+    organization_id = organization.json()["organization_id"]
+    config = {
+        "host": "smtp.example.com",
+        "port": 587,
+        "tls": True,
+        "sender": "noreply@example.com",
+        "username": "noreply@example.com",
+        "password": "fixture-smtp-secret",
+        "enabled": False,
+    }
+    saved = await client.put(
+        f"/api/admin/enterprise/organizations/{organization_id}/smtp",
+        headers=admin_auth,
+        json=config,
+    )
+    assert saved.status_code == 200
+    assert saved.json()["password_configured"] is True
+    assert "fixture-smtp-secret" not in saved.text
+
+    disabled_test = await client.post(
+        f"/api/admin/enterprise/organizations/{organization_id}/smtp/test",
+        headers=admin_auth,
+        json={"recipient": "admin@example.com"},
+    )
+    assert disabled_test.status_code == 400
+
+    sent: list[tuple[str, str]] = []
+
+    def fake_send(transport, recipient, subject, body):
+        del transport, body
+        sent.append((recipient, subject))
+
+    monkeypatch.setattr("octop.infra.users.email_verification.send_message", fake_send)
+    enabled = {**config, "enabled": True}
+    updated = await client.put(
+        f"/api/admin/enterprise/organizations/{organization_id}/smtp",
+        headers=admin_auth,
+        json=enabled,
+    )
+    assert updated.status_code == 200
+    tested = await client.post(
+        f"/api/admin/enterprise/organizations/{organization_id}/smtp/test",
+        headers=admin_auth,
+        json={"recipient": "admin@example.com"},
+    )
+    assert tested.status_code == 200, tested.text
+    assert sent == [("admin@example.com", "云迈智能体 SMTP 测试")]

@@ -13,6 +13,7 @@ export interface EmbeddingConfig {
 
 export type DownloadStatusType =
   | "idle"
+  | "installing"
   | "loading"
   | "downloading"
   | "done"

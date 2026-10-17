@@ -45,6 +45,15 @@ export interface RegistrationApplication {
   review_note: string | null;
   supplement: string | null;
 }
+export interface EnterpriseSmtp {
+  host: string;
+  port: number;
+  tls: boolean;
+  sender: string;
+  username: string;
+  password_configured: boolean;
+  enabled: boolean;
+}
 
 const json = (body: unknown): RequestInit => ({
   method: "PUT",
@@ -140,5 +149,28 @@ export const enterpriseApi = {
     request<RegistrationApplication>(
       `/admin/enterprise/organizations/${org}/registration-applications/${application}/review`,
       { ...json({ status, note }), method: "POST" },
+    ),
+  smtp: (org: string) =>
+    request<EnterpriseSmtp>(`/admin/enterprise/organizations/${org}/smtp`),
+  saveSmtp: (
+    org: string,
+    body: {
+      host: string;
+      port: number;
+      tls: boolean;
+      sender: string;
+      username: string;
+      password?: string;
+      enabled: boolean;
+    },
+  ) =>
+    request<EnterpriseSmtp>(
+      `/admin/enterprise/organizations/${org}/smtp`,
+      json(body),
+    ),
+  testSmtp: (org: string, recipient: string) =>
+    request<{ ok: boolean; recipient: string }>(
+      `/admin/enterprise/organizations/${org}/smtp/test`,
+      { ...json({ recipient }), method: "POST" },
     ),
 };

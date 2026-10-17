@@ -6,7 +6,13 @@ from tests.support.app import octop_client
 
 async def register(client, username):
     return await client.post(
-        "/api/auth/deployment/register", json={"username": username, "password": "UiTestPass79"}
+        "/api/auth/deployment/register",
+        json={
+            "username": username,
+            "password": "UiTestPass79",
+            "email": f"{username}@example.com",
+            "email_code": "123456",
+        },
     )
 
 

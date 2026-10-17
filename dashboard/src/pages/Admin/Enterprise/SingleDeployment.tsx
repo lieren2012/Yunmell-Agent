@@ -5,7 +5,7 @@ import UsersListPanel from "../Users/UsersListPanel";
 import RolesPanel from "../Users/RolesPanel";
 import EmailSettingsCard from "./EmailSettingsCard";
 import { request } from "../../../api/request";
-import { enterpriseApi, type RegistrationApplication, type TeamControls, type TeamQuota } from "../../../api/modules/enterprise";
+import { enterpriseApi, type EnterpriseSmtp, type RegistrationApplication, type TeamControls, type TeamQuota } from "../../../api/modules/enterprise";
 import { deploymentApi, enrollmentError, type DeploymentInfo } from "../../../api/modules/deployment";
 import { useCurrentUser } from "../../../hooks/useCurrentUser";
 import { userCan } from "../../../utils/permissions";
@@ -23,6 +23,9 @@ export default function SingleDeploymentPage() {
   const [applications, setApplications] = useState<RegistrationApplication[]>([]);
   const [quota, setQuota] = useState<TeamQuota>({ team_id: "", period: "monthly", token_limit: null, request_limit: null, concurrency_limit: null });
   const [controls, setControls] = useState(initialControls);
+  const [smtp, setSmtp] = useState<EnterpriseSmtp>({ host: "", port: 587, tls: true, sender: "", username: "", password_configured: false, enabled: false });
+  const [smtpPassword, setSmtpPassword] = useState("");
+  const [smtpRecipient, setSmtpRecipient] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = async () => {
@@ -30,8 +33,9 @@ export default function SingleDeploymentPage() {
       const value = await request<Deployment>("/admin/enterprise/deployment");
       setInfo(value); form.setFieldsValue({ name: value.name, registration_open: value.registration_open, review_required: value.review_required });
       setModel(value.default_provider_name && value.default_model ? `${value.default_provider_name}/${value.default_model}` : "");
-      const [pending, limits, policy, connection] = await Promise.all([enterpriseApi.applications(value.organization_id), enterpriseApi.quota(value.organization_id, value.team_id), enterpriseApi.controls(value.organization_id, value.team_id), deploymentApi.connection()]);
+      const [pending, limits, policy, connection, smtpConfig] = await Promise.all([enterpriseApi.applications(value.organization_id), enterpriseApi.quota(value.organization_id, value.team_id), enterpriseApi.controls(value.organization_id, value.team_id), deploymentApi.connection(), enterpriseApi.smtp(value.organization_id)]);
       setApplications(pending); if (limits) setQuota(limits); setControls(policy || initialControls); setAddress(connection.address || window.location.origin);
+      setSmtp(smtpConfig);
       if (canManageModels) setProviders(await request<ProviderRow[]>("/admin/providers"));
       setError("");
     } catch (err) { setError(enrollmentError(err)); }
@@ -65,6 +69,27 @@ export default function SingleDeploymentPage() {
       await enterpriseApi.saveQuota(info!.organization_id, info!.team_id, { period: quota.period, token_limit: quota.token_limit, request_limit: quota.request_limit, concurrency_limit: quota.concurrency_limit });
       await enterpriseApi.saveControls(info!.organization_id, info!.team_id, { shell_enabled: controls.shell_enabled, browser_enabled: controls.browser_enabled, desktop_enabled: controls.desktop_enabled, filesystem_enabled: controls.filesystem_enabled, network_enabled: controls.network_enabled });
     })}>保存配额与本机权限</Button></Card>
+    <Card title="企业邮箱 SMTP" extra={<Switch checked={smtp.enabled} onChange={enabled => setSmtp({ ...smtp, enabled })} checkedChildren="启用" unCheckedChildren="停用" />}>
+      <Typography.Paragraph type="secondary">用于注册验证码和忘记密码。密码或授权码只写入服务端密钥存储，不会回显。</Typography.Paragraph>
+      <Space direction="vertical" style={{ width: "100%" }}>
+        <Space wrap>
+          <Input aria-label="SMTP 服务器" placeholder="smtp.example.com" value={smtp.host} onChange={event => setSmtp({ ...smtp, host: event.target.value })} />
+          <InputNumber aria-label="SMTP 端口" min={1} max={65535} value={smtp.port} onChange={port => setSmtp({ ...smtp, port: Number(port || 587) })} />
+          <Space>STARTTLS<Switch checked={smtp.tls} onChange={tls => setSmtp({ ...smtp, tls })} /></Space>
+        </Space>
+        <Input aria-label="发件人" placeholder="发件人邮箱" value={smtp.sender} onChange={event => setSmtp({ ...smtp, sender: event.target.value })} />
+        <Input aria-label="SMTP 账号" placeholder="SMTP 账号" value={smtp.username} onChange={event => setSmtp({ ...smtp, username: event.target.value })} />
+        <Input.Password aria-label="SMTP 密码或授权码" placeholder={smtp.password_configured ? "已配置，留空保持不变" : "SMTP 密码或授权码"} value={smtpPassword} onChange={event => setSmtpPassword(event.target.value)} />
+        <Space wrap>
+          <Button loading={busy} disabled={!info} onClick={() => void run(async () => {
+            await enterpriseApi.saveSmtp(info!.organization_id, { host: smtp.host, port: smtp.port, tls: smtp.tls, sender: smtp.sender, username: smtp.username, password: smtpPassword || undefined, enabled: smtp.enabled });
+            setSmtpPassword("");
+          })}>保存 SMTP 配置</Button>
+          <Input aria-label="测试收件人" placeholder="测试收件人邮箱" value={smtpRecipient} onChange={event => setSmtpRecipient(event.target.value)} />
+          <Button disabled={!info || !smtpRecipient.trim()} onClick={() => void run(() => enterpriseApi.testSmtp(info!.organization_id, smtpRecipient.trim()))}>测试发送</Button>
+        </Space>
+      </Space>
+    </Card>
   </Space>;
   const approvals = <Card title="注册审核" extra={<Button onClick={() => void load()}>刷新</Button>}><Typography.Paragraph type="secondary">申请人使用现有账号与角色库；审核通过后自动归属默认团队。</Typography.Paragraph>
     <List dataSource={applications} locale={{ emptyText: "暂无待审核申请" }} renderItem={application => <List.Item actions={(["approved", "rejected", "needs_info"] as const).map((status, index) => <Button key={status} disabled={busy} onClick={() => void run(() => enterpriseApi.reviewApplication(info!.organization_id, application.application_id, status))}>{["通过", "驳回", "补充资料"][index]}</Button>)}>账号 ID {application.user_id} · 申请 {application.application_id}</List.Item>} />

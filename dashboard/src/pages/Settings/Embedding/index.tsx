@@ -68,7 +68,7 @@ export default function EmbeddingPage() {
         .getConfig()
         .then((cfg) => setConfig(cfg))
         .catch(console.error);
-    } else if (curr === "failed") {
+      } else if (curr === "failed") {
       const fallbackMessage =
         prev === "loading"
           ? t("embedding.loadFailed")
@@ -102,7 +102,9 @@ export default function EmbeddingPage() {
       const state = await refreshDownloadStatus();
 
       if (updated.provider === "local") {
-        if (state?.status === "loading") {
+        if (state?.status === "installing") {
+          message.info(t("embedding.installing", "正在安装本地向量依赖…"));
+        } else if (state?.status === "loading") {
           message.info(t("embedding.loadStarted"));
         } else if (state?.status === "downloading") {
           message.info(t("embedding.downloadStarted"));
@@ -149,7 +151,9 @@ export default function EmbeddingPage() {
     try {
       await api.downloadLocalModel(config?.localModel || "");
       const state = await refreshDownloadStatus();
-      if (state?.status === "loading") {
+      if (state?.status === "installing") {
+        message.info(t("embedding.installing", "正在安装本地向量依赖…"));
+      } else if (state?.status === "loading") {
         message.info(t("embedding.loadStarted"));
       } else if (state?.status === "downloading") {
         message.info(t("embedding.downloadStarted"));
@@ -175,6 +179,7 @@ export default function EmbeddingPage() {
   }
 
   const isStatusBusy =
+    downloadState?.status === "installing" ||
     downloadState?.status === "loading" ||
     downloadState?.status === "downloading";
   const appliedProvider = downloadState?.applied_provider ?? "none";
@@ -216,7 +221,9 @@ export default function EmbeddingPage() {
             {t("embedding.currentApplied")}
           </h3>
           <span className={`${styles.statusBadge} ${styles[appliedStatus]}`}>
-            {appliedStatus === "loading"
+            {appliedStatus === "installing"
+              ? t("embedding.installing", "安装依赖中")
+              : appliedStatus === "loading"
               ? t("embedding.loading")
               : appliedStatus === "downloading"
               ? t("embedding.downloading")
@@ -356,7 +363,9 @@ export default function EmbeddingPage() {
                     <span
                       className={`${styles.statusBadge} ${styles[displayStatus]}`}
                     >
-                      {displayStatus === "loading"
+                      {displayStatus === "installing"
+                        ? t("embedding.installing", "安装依赖中")
+                        : displayStatus === "loading"
                         ? t("embedding.loading")
                         : displayStatus === "downloading"
                         ? t("embedding.downloading")
@@ -367,6 +376,13 @@ export default function EmbeddingPage() {
                         : t("embedding.idle")}
                     </span>
                   </div>
+
+                  {displayStatus === "installing" && (
+                    <div className={styles.statusSuccess}>
+                      <Spin size="small" />
+                      <span>{t("embedding.installing", "正在安装本地向量依赖…")}</span>
+                    </div>
+                  )}
 
                   {displayStatus === "loading" && (
                     <div className={styles.statusSuccess}>

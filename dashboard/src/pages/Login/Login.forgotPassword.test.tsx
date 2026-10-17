@@ -27,7 +27,7 @@ vi.mock("./CaptchaField", () => ({
 import LoginPage from "./index";
 
 describe("Login forgot-password hint", () => {
-  it("opens a dialog with the CLI reset tip when asked", async () => {
+  it("shows email reset guidance without exposing local CLI commands", async () => {
     const user = userEvent.setup();
     render(
       <MemoryRouter>
@@ -43,17 +43,11 @@ describe("Login forgot-password hint", () => {
     const dialog = await screen.findByRole("dialog");
     const hint = screen.getByTestId("login-forgot-password");
     expect(dialog).toContainElement(hint);
-    expect(hint.textContent).toMatch(/octop user passwd/);
-    expect(hint.textContent).toMatch(/--password/);
-    expect(hint.textContent).toMatch(/Users|用户/);
-    expect(hint.textContent).toMatch(/Linux|终端|Terminal/);
-
-    // antd Segmented radios use pointer-events:none on the input; click the label text.
-    await user.click(screen.getByText("Windows"));
-    expect(hint.textContent).toMatch(/USERPROFILE/);
-    expect(hint.textContent).not.toMatch(/docker exec/);
-
-    await user.click(screen.getByText("Docker"));
-    expect(hint.textContent).toMatch(/docker exec/);
+    expect(hint.textContent).toMatch(/邮箱验证码/);
+    expect(hint.textContent).toMatch(/SMTP/);
+    expect(hint.textContent).toMatch(/企业管理员/);
+    expect(hint.textContent).not.toMatch(/octop user passwd|--password|docker exec|USERPROFILE/);
+    expect(screen.queryByText("Windows")).toBeNull();
+    expect(screen.queryByText("Docker")).toBeNull();
   });
 });
