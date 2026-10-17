@@ -23,7 +23,7 @@ ALL_PLATS=(
   windows-arm64
 )
 
-# Public GitHub Release names: Octop-<kind>-<os>-<arch>-<version>.<ext>
+# Public GitHub Release names: Octop-portable-* and Yunmell-Agent-desktop-*
 # Zip payload directory stays Octop-<plat>/ (the desktop unzip strips the first
 # path component). PyPI wheels keep the PEP 427 name and are not renamed here.
 octop_version() {
@@ -40,9 +40,9 @@ desktop_pkg_basename() {
   local ver
   ver="$(octop_version)"
   case "$plat" in
-    darwin-*) echo "Octop-desktop-${plat}-${ver}.dmg" ;;
-    windows-*) echo "Octop-desktop-${plat}-${ver}.exe" ;;
-    linux-*) echo "Octop-desktop-${plat}-${ver}.tar.gz" ;;
+    darwin-*) echo "Yunmell-Agent-desktop-${plat}-${ver}.dmg" ;;
+    windows-*) echo "Yunmell-Agent-desktop-${plat}-${ver}.exe" ;;
+    linux-*) echo "Yunmell-Agent-desktop-${plat}-${ver}.tar.gz" ;;
     *)
       echo "unknown platform: ${plat}" >&2
       return 1
