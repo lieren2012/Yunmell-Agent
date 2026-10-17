@@ -391,25 +391,6 @@ jobs:
             exit 1
           fi
 
-      # Read the current body so an official release keeps the changelog and
-      # download section written by Release.yml. Passing an empty body to
-      # action-gh-release leaves an existing release body untouched.
-      - name: Read existing release body
-        id: existing
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          body=$(gh release view "${{ steps.rel.outputs.tag }}" \
-            --repo "${{ github.repository }}" --json body -q .body 2>/dev/null || true)
-          delimiter="BODY_$(date +%s%N)"
-          {
-            echo "body<<${delimiter}"
-            printf '%s' "$body"
-            echo
-            echo "${delimiter}"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -419,8 +400,6 @@ jobs:
           # Upsert: works whether Release workflow already created the release.
           generate_release_notes: false
           name: "云迈客户端 ${{ steps.rel.outputs.tag }}"
-          # Release.yml owns the notes for official v* tags. Pass a body only
-          # when the release has none yet, so this job cannot overwrite the
-          # changelog/download section with client-only wording.
-          body: ${{ steps.existing.outputs.body }}
+          # Release.yml owns the notes for official v* tags. Do not pass a
+          # body here: an empty body clears notes when the jobs race.
           prerelease: ${{ contains(steps.rel.outputs.tag, 'b') || contains(steps.rel.outputs.tag, 'rc') }}
