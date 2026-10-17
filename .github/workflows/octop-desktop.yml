@@ -1,8 +1,10 @@
 name: Octop Desktop Package
 
 # 正式发版：Auto Tag 在打 v* 后与 Release / Docker Publish 一并 dispatch。
-# 产物 upsert 到同一 GitHub Release。手工补包：workflow_dispatch + release_tag
-# （不必跑在 v* ref 上）。attach_from_run 只挂已有 artifact、不重打。
+# Release.yml owns the release metadata; this workflow uploads client assets
+# after that Release exists. 手工补包：workflow_dispatch + release_tag
+# （不必跑在 v* ref 上，目标 Release 需先创建）。attach_from_run 只挂已有
+# artifact、不重打。
 
 on:
   push:
@@ -20,7 +22,7 @@ on:
         default: "all"
         type: string
       attach_release:
-        description: "Upload artifacts to a GitHub Release (v* ref, or pass release_tag)"
+        description: "Upload artifacts to an existing GitHub Release (v* ref, or pass release_tag)"
         required: false
         default: true
         type: boolean
@@ -367,6 +369,28 @@ jobs:
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
+      # Release.yml owns the release metadata and notes. The desktop and
+      # release workflows start together on a tag, so do not let this job
+      # create an empty release while Release.yml is still building wheels.
+      # A missing release after the wait is a real failure; creating one here
+      # would reintroduce the body-null race.
+      - name: Wait for GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.rel.outputs.tag }}"
+          for attempt in $(seq 1 60); do
+            if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              echo "Release $tag is ready."
+              exit 0
+            fi
+            echo "Release $tag is not ready (attempt ${attempt}/60); retrying in 5s..."
+            sleep 5
+          done
+          echo "Release $tag was not created by Release.yml within 5 minutes." >&2
+          exit 1
+
       # v8 required for archive:false artifacts. skip-decompress keeps the
       # uploaded .zip / .tar.gz / .dmg / .exe intact — default unzip turns portable
       # zips into directories, so files: release-assets/* would skip them.
@@ -391,15 +415,14 @@ jobs:
             exit 1
           fi
 
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.rel.outputs.tag }}
-          files: release-assets/*
-          fail_on_unmatched_files: true
-          # Upsert: works whether Release workflow already created the release.
-          generate_release_notes: false
-          name: "云迈客户端 ${{ steps.rel.outputs.tag }}"
-          # Release.yml owns the notes for official v* tags. Do not pass a
-          # body here: an empty body clears notes when the jobs race.
-          prerelease: ${{ contains(steps.rel.outputs.tag, 'b') || contains(steps.rel.outputs.tag, 'rc') }}
+      # Upload assets only. Release.yml owns title, body and prerelease state.
+      # Using gh release upload also guarantees this job cannot create a
+      # metadata-less release when the two workflows start concurrently.
+      - name: Upload client assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ steps.rel.outputs.tag }}" release-assets/* \
+            --repo "${{ github.repository }}" \
+            --clobber
