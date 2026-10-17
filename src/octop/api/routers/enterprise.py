@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import smtplib
+from email.message import EmailMessage
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends
@@ -58,8 +60,40 @@ class RegistrationPolicyBody(BaseModel):
     review_required: bool
 
 
+class SmtpConfigBody(BaseModel):
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(default=587, ge=1, le=65535)
+    tls: bool = True
+    sender: str = Field(min_length=3, max_length=254)
+    username: str = Field(min_length=1, max_length=254)
+    password: str | None = Field(default=None, max_length=512)
+    enabled: bool = False
+
+
+class SmtpTestBody(BaseModel):
+    recipient: str = Field(min_length=3, max_length=254)
+
+
 def _repo(server: Any) -> EnterpriseRepo:
     return cast(EnterpriseRepo, server.services.enterprise_repo)
+
+
+def _smtp_key(organization_id: str, field: str) -> str:
+    return f"enterprise.smtp.{organization_id}.{field}"
+
+
+def _smtp_payload(server: Any, organization_id: str) -> dict[str, Any]:
+    settings = server.services.settings_repo
+    secret = server.services.secret_repo.get(_smtp_key(organization_id, "password"))
+    return {
+        "host": settings.get(_smtp_key(organization_id, "host")) or "",
+        "port": int(settings.get(_smtp_key(organization_id, "port")) or 587),
+        "tls": (settings.get(_smtp_key(organization_id, "tls")) or "true") == "true",
+        "sender": settings.get(_smtp_key(organization_id, "sender")) or "",
+        "username": settings.get(_smtp_key(organization_id, "username")) or "",
+        "password_configured": bool(secret),
+        "enabled": (settings.get(_smtp_key(organization_id, "enabled")) or "false") == "true",
+    }
 
 
 def _name(value: str) -> str:
@@ -500,3 +534,85 @@ async def set_registration_policy(
         payload=f"review_required={body.review_required}",
     )
     return _organization_payload(row)
+
+
+@router.get("/organizations/{organization_id}/smtp", summary="Read enterprise SMTP configuration")
+async def get_smtp_config(
+    organization_id: str,
+    _: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    if _repo(server).get_organization(organization_id) is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "organization not found")
+    return _smtp_payload(server, organization_id)
+
+
+@router.put("/organizations/{organization_id}/smtp", summary="Save enterprise SMTP configuration")
+async def put_smtp_config(
+    organization_id: str,
+    body: SmtpConfigBody,
+    actor: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    if _repo(server).get_organization(organization_id) is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "organization not found")
+    values = {
+        "host": body.host.strip(),
+        "port": str(body.port),
+        "tls": "true" if body.tls else "false",
+        "sender": body.sender.strip(),
+        "username": body.username.strip(),
+        "enabled": "true" if body.enabled else "false",
+    }
+    for field, value in values.items():
+        server.services.settings_repo.set(_smtp_key(organization_id, field), value)
+    if body.password is not None:
+        server.services.secret_repo.set(
+            _smtp_key(organization_id, "password"), body.password.encode()
+        )
+        if server.services.settings_repo.get("yunmell.deployment.organization") == organization_id:
+            for field, value in values.items():
+                server.services.settings_repo.set(f"auth.smtp.{field}", value)
+            server.services.secret_repo.set("auth.smtp.password", body.password.encode())
+    server.services.audit_repo.write(
+        actor=actor.username, action="organization.smtp.update", target=organization_id
+    )
+    return _smtp_payload(server, organization_id)
+
+
+@router.post(
+    "/organizations/{organization_id}/smtp/test", summary="Send an enterprise SMTP test message"
+)
+async def test_smtp_config(
+    organization_id: str,
+    body: SmtpTestBody,
+    actor: User = Depends(require_permission("users")),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    if _repo(server).get_organization(organization_id) is None:
+        raise OctopError(ErrorCode.NOT_FOUND, "organization not found")
+    config = _smtp_payload(server, organization_id)
+    password = server.services.secret_repo.get(_smtp_key(organization_id, "password"))
+    if not config["host"] or not config["sender"] or not config["username"] or not password:
+        raise OctopError(
+            ErrorCode.SLASH_BAD_ARGS, "SMTP 配置不完整，请先保存账号和密码或授权码", status=400
+        )
+    msg = EmailMessage()
+    msg["From"] = config["sender"]
+    msg["To"] = body.recipient.strip()
+    msg["Subject"] = "云迈智能体 SMTP 测试"
+    msg.set_content("云迈智能体企业邮箱 SMTP 配置测试成功。")
+    try:
+        with smtplib.SMTP(config["host"], config["port"], timeout=15) as smtp:
+            smtp.ehlo()
+            if config["tls"]:
+                smtp.starttls()
+                smtp.ehlo()
+            smtp.login(config["username"], password.decode(errors="replace"))
+            smtp.send_message(msg)
+    except Exception as exc:
+        raise OctopError(ErrorCode.SLASH_BAD_ARGS, f"SMTP 测试发送失败: {exc}", status=400) from exc
+    server.services.audit_repo.write(
+        actor=actor.username, action="organization.smtp.test", target=organization_id
+    )
+    return {"ok": True, "recipient": body.recipient.strip()}

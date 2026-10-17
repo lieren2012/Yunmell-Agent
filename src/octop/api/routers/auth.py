@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import smtplib
+from email.message import EmailMessage
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
@@ -86,6 +88,17 @@ class EnterpriseRegistrationBody(BaseModel):
     display_name: str | None = Field(default=None, max_length=128)
     email: str | None = Field(default=None, max_length=254)
     supplement: str | None = Field(default=None, max_length=2000)
+    email_code: str | None = Field(default=None, min_length=6, max_length=6)
+
+
+class EmailCodeBody(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class PasswordResetBody(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    code: str = Field(min_length=6, max_length=6)
+    new_password: str = Field(min_length=8, max_length=200)
 
 
 class CaptchaPublicResponse(BaseModel):
@@ -154,6 +167,45 @@ def _directory_may_own(row: Any) -> bool:
     if row is None:
         return True
     return not row.password_hash
+
+
+def _smtp_auth(server: Any) -> tuple[str, int, bool, str, str, str] | None:
+    settings = server.services.settings_repo
+    host = settings.get("auth.smtp.host") or ""
+    sender = settings.get("auth.smtp.sender") or ""
+    username = settings.get("auth.smtp.username") or ""
+    password = server.services.secret_repo.get("auth.smtp.password")
+    if not host or not sender or not username or not password:
+        return None
+    return (
+        host,
+        int(settings.get("auth.smtp.port") or 587),
+        (settings.get("auth.smtp.tls") or "true") == "true",
+        sender,
+        username,
+        password.decode(errors="replace"),
+    )
+
+
+def _send_email_code(server: Any, email: str, purpose: str) -> None:
+    from octop.infra.users.email_verification import issue
+
+    code = issue(email, purpose)
+    config = _smtp_auth(server)
+    if config is None:
+        raise OctopError(ErrorCode.FORBIDDEN, "企业邮箱 SMTP 尚未配置", status=503)
+    host, port, tls, sender, username, password = config
+    msg = EmailMessage()
+    msg["From"], msg["To"] = sender, email
+    msg["Subject"] = "云迈智能体邮箱验证码"
+    msg.set_content(f"你的验证码是 {code}，10 分钟内有效。")
+    with smtplib.SMTP(host, port, timeout=15) as smtp:
+        smtp.ehlo()
+        if tls:
+            smtp.starttls()
+            smtp.ehlo()
+        smtp.login(username, password)
+        smtp.send_message(msg)
 
 
 async def _authenticate_ldap(server: Any, username: str, password: str, client_ip: str) -> Any:
@@ -288,6 +340,14 @@ async def enterprise_register(
     organization = server.services.enterprise_repo.get_organization_by_slug(login_slug)
     if organization is None:
         raise OctopError(ErrorCode.NOT_FOUND, "enterprise not found")
+    # Once SMTP is configured, email verification is mandatory. Keep legacy
+    # self-hosted installations without mail settings usable until an admin
+    # enables the new enterprise mail flow.
+    if body.email and _smtp_auth(server) is not None:
+        from octop.infra.users.email_verification import verify
+
+        if not body.email_code or not verify(body.email, "register", body.email_code):
+            raise OctopError(ErrorCode.AUTH_FAILED, "邮箱验证码无效或已过期", status=400)
     user = await server.user_manager.create(
         username=body.username,
         password=body.password,
@@ -322,6 +382,56 @@ async def enterprise_register(
         "status": application.status,
         "enterprise": organization.login_slug,
     }
+
+
+@router.post("/email/send-code", summary="Send an email verification code")
+async def send_email_code(body: EmailCodeBody, server: Any = Depends(get_server)) -> dict[str, Any]:
+    email = normalize_email(body.email)
+    if email is None:
+        raise OctopError(ErrorCode.EMAIL_INVALID, "invalid email address", status=400)
+    try:
+        _send_email_code(server, email, "register")
+    except OctopError:
+        raise
+    except Exception as exc:
+        raise OctopError(ErrorCode.SLASH_BAD_ARGS, f"验证码发送失败: {exc}", status=400) from exc
+    return {"ok": True, "expires_in": 600}
+
+
+@router.post("/password-reset/request", summary="Send a password reset code")
+async def request_password_reset(
+    body: EmailCodeBody, server: Any = Depends(get_server)
+) -> dict[str, Any]:
+    email = normalize_email(body.email)
+    if email is None:
+        raise OctopError(ErrorCode.EMAIL_INVALID, "invalid email address", status=400)
+    if server.services.user_repo.get_by_email(email) is None:
+        raise OctopError(ErrorCode.AUTH_FAILED, "account email not found", status=404)
+    try:
+        _send_email_code(server, email, "reset")
+    except OctopError:
+        raise
+    except Exception as exc:
+        raise OctopError(ErrorCode.SLASH_BAD_ARGS, f"验证码发送失败: {exc}", status=400) from exc
+    return {"ok": True, "expires_in": 600}
+
+
+@router.post("/password-reset/confirm", summary="Reset a password with an email code")
+async def confirm_password_reset(
+    body: PasswordResetBody, server: Any = Depends(get_server)
+) -> Response:
+    email = normalize_email(body.email)
+    if email is None:
+        raise OctopError(ErrorCode.EMAIL_INVALID, "invalid email address", status=400)
+    from octop.infra.users.email_verification import verify
+
+    if not verify(email, "reset", body.code):
+        raise OctopError(ErrorCode.AUTH_FAILED, "邮箱验证码无效或已过期", status=400)
+    row = server.services.user_repo.get_by_email(email)
+    if row is None:
+        raise OctopError(ErrorCode.AUTH_FAILED, "account email not found", status=404)
+    await server.user_manager.reset_password(row.username, body.new_password)
+    return Response(status_code=204)
 
 
 @router.post("/enterprises/{login_slug}/login", summary="Sign in through an enterprise address")

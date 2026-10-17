@@ -5,7 +5,9 @@
         <key>CFBundlePackageType</key>
         <string>APPL</string>
         <key>CFBundleName</key>
-        <string>Yunmell-Agent</string>
+        <string>云迈智能体</string>
+        <key>CFBundleDisplayName</key>
+        <string>云迈智能体</string>
         <key>CFBundleExecutable</key>
         <string>Yunmell-Agent</string>
         <key>CFBundleIdentifier</key>
@@ -13,7 +15,7 @@
         <key>CFBundleVersion</key>
         <string>1.0.7.dev</string>
         <key>CFBundleGetInfoString</key>
-        <string>Yunmell-Agent desktop shell (dev)</string>
+        <string>云迈智能体桌面客户端（Yunmell Agent，开发版）</string>
         <key>CFBundleShortVersionString</key>
         <string>1.0.7.dev</string>
         <key>CFBundleIconFile</key>
