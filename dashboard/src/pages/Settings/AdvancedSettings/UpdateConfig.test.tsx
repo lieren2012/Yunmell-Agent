@@ -21,7 +21,7 @@ beforeEach(() => {
   api.getChannelStatuses.mockResolvedValue({
     official: {
       channel: "official",
-      current_version: "1.0.2b8",
+      current_version: "1.0.2b9",
       latest_version: "1.0.3",
       stable_only: true,
     },
@@ -40,7 +40,7 @@ it("shows the upstream baseline separately from the Yunmell product version", as
     name: "OpenOct/Octop 官方更新",
   });
   const yunmell = screen.getByRole("region", { name: "云迈自研更新" });
-  expect(await within(official).findByText("1.0.2b8")).toBeInTheDocument();
+  expect(await within(official).findByText("1.0.2b9")).toBeInTheDocument();
   expect(within(official).queryByText("1.0.9")).not.toBeInTheDocument();
   expect(within(yunmell).getAllByText("1.0.9")).toHaveLength(2);
 });
@@ -57,7 +57,7 @@ it("an official check failure leaves the Yunmell check usable", async () => {
         }),
   );
   render(<UpdateConfig />);
-  await screen.findByText("1.0.2b8");
+  await screen.findByText("1.0.2b9");
   fireEvent.click(screen.getByRole("button", { name: "检查官方更新" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "官方更新检查失败",

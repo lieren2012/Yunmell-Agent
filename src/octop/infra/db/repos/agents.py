@@ -279,4 +279,8 @@ class AgentRepo:
 
     def delete(self, agent_id: str) -> None:
         with self._db.transaction() as conn:
+            # ``care_push_records`` predates the agent FK convention and has
+            # no ON DELETE CASCADE; remove its agent-scoped delivery markers
+            # before dropping the agent row.
+            conn.execute("DELETE FROM care_push_records WHERE agent_id = ?", (agent_id,))
             conn.execute("DELETE FROM agents WHERE agent_id = ?", (agent_id,))

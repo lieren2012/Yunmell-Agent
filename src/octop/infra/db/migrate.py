@@ -1587,6 +1587,19 @@ def _ensure_skill_copy_policy_schema(db: DatabasePool) -> None:
     _ensure_column(db, "skill_packages", "copy_policy", "TEXT NOT NULL DEFAULT 'snapshot'")
 
 
+def _ensure_skill_package_download_schema(db: DatabasePool) -> None:
+    """Ensure the upstream b9 skill-package download flag exists.
+
+    Upstream Octop v1.0.2b9 used migration 021 for this column.  Yunmell's
+    private-deployment branch already uses v21 for the enterprise tables, so
+    the column is carried by a later migration and repaired idempotently here
+    for databases restored from either history.
+    """
+    if not _table_exists(db, "skill_packages"):
+        return
+    _ensure_column(db, "skill_packages", "allow_download", "INTEGER NOT NULL DEFAULT 1")
+
+
 def _ensure_bridge_connections_schema(db: DatabasePool) -> None:
     """Fold notes + unique display_name + auto_reconnect into unreleased v19."""
     if not _table_exists(db, "bridge_connections"):
@@ -1660,6 +1673,7 @@ def _repair_legacy_schema(db: DatabasePool) -> None:
         _ensure_agent_profile_columns(db)
         _backfill_agent_profile_from_config(db)
     _ensure_skill_packages_schema(db)
+    _ensure_skill_package_download_schema(db)
     _ensure_published_experts_schema(db)
     _ensure_usage_cache_schema(db)
     # Cover pre-squash develop DBs that already recorded version ≥5 but only
@@ -1806,6 +1820,7 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
     Version 16 adds ``agents.kind`` so team hosts can be listed.
     Version 17 adds sticky ``conversation_mode`` and ``pending_plan_path`` on threads.
     Version 18 adds ``user_role`` templates and non-FK role id/name snapshots.
+    Version 29 adds the upstream skill-package ``allow_download`` flag.
     """
     if version == 2:
         if _table_exists(db, "cron_jobs"):
@@ -1941,6 +1956,11 @@ def _apply_sqlite_migration(db: DatabasePool, version: int, path: Path) -> None:
         with db.connect() as conn:
             conn.execute("UPDATE _schema_version SET version = ?", (version,))
         return
+    if version == 29:
+        _ensure_skill_package_download_schema(db)
+        with db.connect() as conn:
+            conn.execute("UPDATE _schema_version SET version = ?", (version,))
+        return
     sql = path.read_text(encoding="utf-8")
     with db.connect() as conn:
         conn.executescript(sql)
@@ -1997,9 +2017,40 @@ def _ensure_registration_review_policy_schema(db: DatabasePool) -> None:
     )
 
 
+def _ensure_enterprise_schema(db: DatabasePool) -> None:
+    """Backfill Yunmell's v21 enterprise tables on an upstream b9 database.
+
+    Official Octop v1.0.2b9 also records schema version 21, but spends that
+    version on ``skill_packages.allow_download``.  The SQL is intentionally
+    applied without advancing the watermark so Yunmell's v22+ migrations can
+    continue in order.
+    """
+    path = _MIGRATIONS_DIR / (
+        "021_enterprise.pg.sql" if db.dialect == "postgresql" else "021_enterprise.sql"
+    )
+    sql = path.read_text(encoding="utf-8")
+    if db.dialect == "postgresql":
+        with db.connect() as conn, conn.transaction():
+            _apply_postgresql_migration(conn, sql)
+    else:
+        with db.connect() as conn:
+            conn.executescript(sql)
+
+
+def _is_upstream_b9_schema_21(db: DatabasePool) -> bool:
+    """Identify official b9's colliding schema watermark before v22 runs."""
+    if _current_version(db) != 21:
+        return False
+    if _table_exists(db, "organizations") or not _table_exists(db, "skill_packages"):
+        return False
+    return "allow_download" in _table_columns(db, "skill_packages")
+
+
 def run_migrations(db: DatabasePool) -> None:
     if db.dialect == "sqlite":
         _repair_legacy_schema(db)
+    if _is_upstream_b9_schema_21(db):
+        _ensure_enterprise_schema(db)
     for version, path in _discover(db.dialect):
         if version <= _current_version(db):
             continue
@@ -2042,6 +2093,7 @@ def run_migrations(db: DatabasePool) -> None:
     _reconcile_pre_squash_schema_version(db)
     _ensure_knowledge_bases_schema(db)
     _ensure_skill_packages_schema(db)
+    _ensure_skill_package_download_schema(db)
     _ensure_published_experts_schema(db)
     _ensure_usage_cache_schema(db)
     _ensure_user_invites_schema(db)

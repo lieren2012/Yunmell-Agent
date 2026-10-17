@@ -99,11 +99,11 @@ The upgraded Octop process then applies the normal database migrations during
 startup. Newer extracted runtimes are never downgraded; PostgreSQL remains
 externally managed and is not copied by the desktop shell.
 
-GitHub Release names follow `Octop-<kind>-<os>-<arch>-<version>.<ext>`:
+GitHub Release names follow the `Yunmell-Agent-desktop-<os>-<arch>-<version>.<ext>` pattern for desktop installers:
 
-- Desktop GUI: `Octop-desktop-<plat>-<version>.dmg` (macOS; open and drag
-  `Octop.app` into Applications), `.exe` (Windows NSIS installer — copies
-  into `Program Files\Octop` and creates Start Menu + desktop shortcuts),
+- Desktop GUI: `Yunmell-Agent-desktop-<plat>-<version>.dmg` (macOS; open and drag
+  `Yunmell-Agent.app` into Applications), `.exe` (Windows NSIS installer — copies
+  into `Program Files\Yunmell-Agent` and creates Start Menu + desktop shortcuts),
   `.tar.gz` (Linux)
 - Green runtime zip: `Octop-portable-<plat>-<version>.zip`
 - PyPI wheels stay `octop-<version>-py3-none-any.whl` (PEP 427)
