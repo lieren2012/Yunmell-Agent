@@ -9,4 +9,3 @@ __version__ = "1.1.2"
 # httpx 0.28 treats NO_PROXY CIDR as an exact IP (see issue #1347). Patch once
 # at import so CLI, ``octop run``, and in-process harness clients all honor it.
 install_httpx_cidr_no_proxy()
-
