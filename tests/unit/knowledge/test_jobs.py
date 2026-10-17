@@ -17,6 +17,7 @@ from octop.infra.db.repos.users import UserRepo
 from octop.infra.knowledge import jobs
 from octop.infra.knowledge.files import write_document
 from octop.infra.knowledge.index import KnowledgeIndex
+from octop.infra.knowledge.service import KnowledgeService
 
 
 def test_enqueue_index_document_limits_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -84,6 +85,100 @@ def test_process_document_marks_empty_extract_as_failed(
     assert updated is not None
     assert updated.status == "failed"
     assert updated.chunk_count == 0
+
+
+@pytest.mark.parametrize("filename", ["blank.xlsx", "blank.pptx"])
+def test_process_document_marks_empty_office_extract_with_actionable_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filename: str
+) -> None:
+    from openpyxl import Workbook
+    from pptx import Presentation
+
+    monkeypatch.setenv("OCTOP_HOME", str(tmp_path / "home"))
+    pool = SqlitePool(tmp_path / "octop.db")
+    run_migrations(pool)
+    repo = KnowledgeRepo(pool)
+    owner_id = UserRepo(pool).create(username="owner", password_hash="h", role="user")
+    kb = repo.create_base(owner_user_id=owner_id, name="Docs", embedding_model="model")
+    doc = repo.create_document(
+        kb_id=kb.id,
+        filename=filename,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        if filename.endswith(".xlsx")
+        else "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        byte_size=0,
+    )
+    path = tmp_path / "office.bin"
+    if filename.endswith(".xlsx"):
+        Workbook().save(path)
+    else:
+        Presentation().save(path)
+    write_document(kb.id, doc.id, filename, path.read_bytes())
+    services = SimpleNamespace(knowledge_repo=repo, settings_repo=SettingsRepo(pool))
+    monkeypatch.setattr(jobs, "optional_ocr_extractor", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        jobs,
+        "embed_knowledge_texts",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError()),
+    )
+
+    with pytest.raises(ValueError, match="文件中没有可提取的文本"):
+        jobs.process_document(services, kb.id, doc.id)
+
+    updated = repo.get_document(doc.id)
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error_message
+    assert ("Excel" in updated.error_message) or ("PowerPoint" in updated.error_message)
+
+
+def test_failed_xlsx_can_be_reindexed_after_reupload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openpyxl import Workbook
+
+    monkeypatch.setenv("OCTOP_HOME", str(tmp_path / "home"))
+    pool = SqlitePool(tmp_path / "octop.db")
+    run_migrations(pool)
+    repo = KnowledgeRepo(pool)
+    owner_id = UserRepo(pool).create(username="owner", password_hash="h", role="user")
+    kb = repo.create_base(owner_user_id=owner_id, name="Docs", embedding_model="model")
+    doc = repo.create_document(
+        kb_id=kb.id,
+        filename="report.xlsx",
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        byte_size=4,
+    )
+    write_document(kb.id, doc.id, doc.filename, b"broken")
+    services = SimpleNamespace(knowledge_repo=repo, settings_repo=SettingsRepo(pool))
+    monkeypatch.setattr(jobs, "optional_ocr_extractor", lambda *_a, **_k: None)
+    with pytest.raises(ValueError, match="Excel 文件无法解析"):
+        jobs.process_document(services, kb.id, doc.id)
+    failed = repo.get_document(doc.id)
+    assert failed is not None and failed.status == "failed"
+
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.append(["恢复后的内容"])
+    valid_path = tmp_path / "valid.xlsx"
+    workbook.save(valid_path)
+    write_document(kb.id, doc.id, doc.filename, valid_path.read_bytes())
+
+    refreshed = KnowledgeService(services).reindex_document(kb.id, doc.id, actor_user_id=owner_id)
+    assert refreshed.status == "pending"
+    assert refreshed.error_message == ""
+    monkeypatch.setattr(
+        jobs,
+        "embed_knowledge_texts",
+        lambda _services, texts, **_kwargs: [[1.0, 0.0] for _ in texts],
+    )
+    jobs.process_document(services, kb.id, doc.id)
+    recovered = repo.get_document(doc.id)
+    assert recovered is not None
+    assert recovered.status == "ready"
+    assert recovered.error_message == ""
+    assert recovered.chunk_count == 1
 
 
 def test_process_document_indexes_chunks_and_marks_ready(

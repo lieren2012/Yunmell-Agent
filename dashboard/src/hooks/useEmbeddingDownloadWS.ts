@@ -8,7 +8,7 @@ import type { DownloadState } from "../api/types/embedding";
  * Keep polling until the component unmounts. Stopping at done/failed can miss a
  * later download click, leaving the progress bar stale.
  *
- * - loading/downloading: poll every 1s for responsive progress.
+ * - installing/loading/downloading: poll every 1s for responsive progress.
  * - other states: poll every 2s to reduce idle requests.
  */
 export const useEmbeddingDownloadWS = () => {
@@ -54,7 +54,9 @@ export const useEmbeddingDownloadWS = () => {
         }
 
         const nextDelay =
-          state.status === "loading" || state.status === "downloading"
+          state.status === "installing" ||
+          state.status === "loading" ||
+          state.status === "downloading"
             ? 1000
             : 2000;
         scheduleNext(nextDelay);

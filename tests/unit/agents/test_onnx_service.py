@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import threading
@@ -198,6 +199,36 @@ def test_ensure_deps_installs_when_allow_install_true(monkeypatch) -> None:
     monkeypatch.setattr(mod, "install_packages", fake_install)
     assert mod.ensure_local_embedding_deps(allow_install=True) == "installed"
     assert state["ok"] is True
+
+
+async def test_cached_model_dependency_install_runs_in_background(monkeypatch) -> None:
+    """A cached model still needs dependency setup without blocking the request."""
+    from octop.infra.agents.providers import onnx_service as mod
+
+    model = ONNX_PRESET_MODEL_IDS[0]
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    monkeypatch.setattr(mod, "local_embedding_deps_available", lambda: False)
+    monkeypatch.setattr(mod, "is_model_downloaded", lambda _name: True)
+    monkeypatch.setattr(mod, "assert_catalog_model", lambda name: name)
+
+    async def fake_ensure(*_args: object, **_kwargs: object) -> str:
+        started.set()
+        await release.wait()
+        return "installed"
+
+    monkeypatch.setattr(mod, "ensure_local_embedding_deps_async", fake_ensure)
+    manager = mod.OnnxDownloadManager()
+    state = await manager.start_download(model)
+    assert state.status is mod.OnnxDownloadStatus.INSTALLING
+    assert state.task_id
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert manager.state.status is mod.OnnxDownloadStatus.INSTALLING
+    release.set()
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert manager.state.status is mod.OnnxDownloadStatus.DONE
 
 
 def test_status_payload_omits_install_commands(tmp_path, monkeypatch) -> None:

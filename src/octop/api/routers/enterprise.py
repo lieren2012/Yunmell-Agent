@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import smtplib
-from email.message import EmailMessage
+import asyncio
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends
@@ -593,25 +592,37 @@ async def test_smtp_config(
         raise OctopError(ErrorCode.NOT_FOUND, "organization not found")
     config = _smtp_payload(server, organization_id)
     password = server.services.secret_repo.get(_smtp_key(organization_id, "password"))
+    if not config["enabled"]:
+        raise OctopError(ErrorCode.FORBIDDEN, "SMTP 尚未启用", status=400)
     if not config["host"] or not config["sender"] or not config["username"] or not password:
         raise OctopError(
             ErrorCode.SLASH_BAD_ARGS, "SMTP 配置不完整，请先保存账号和密码或授权码", status=400
         )
-    msg = EmailMessage()
-    msg["From"] = config["sender"]
-    msg["To"] = body.recipient.strip()
-    msg["Subject"] = "云迈智能体 SMTP 测试"
-    msg.set_content("云迈智能体企业邮箱 SMTP 配置测试成功。")
+    from octop.infra.users.email_verification import SmtpConfig, send_message
+
+    transport = SmtpConfig(
+        host=config["host"],
+        port=config["port"],
+        tls=config["tls"],
+        sender=config["sender"],
+        username=config["username"],
+        password=password.decode(errors="replace"),
+        enabled=True,
+    )
     try:
-        with smtplib.SMTP(config["host"], config["port"], timeout=15) as smtp:
-            smtp.ehlo()
-            if config["tls"]:
-                smtp.starttls()
-                smtp.ehlo()
-            smtp.login(config["username"], password.decode(errors="replace"))
-            smtp.send_message(msg)
+        await asyncio.to_thread(
+            send_message,
+            transport,
+            body.recipient.strip(),
+            "云迈智能体 SMTP 测试",
+            "云迈智能体企业邮箱 SMTP 配置测试成功。",
+        )
     except Exception as exc:
-        raise OctopError(ErrorCode.SLASH_BAD_ARGS, f"SMTP 测试发送失败: {exc}", status=400) from exc
+        # Transport errors can include provider responses or connection details;
+        # keep those out of the API response and audit log.
+        raise OctopError(
+            ErrorCode.SLASH_BAD_ARGS, "SMTP 测试发送失败，请检查配置", status=400
+        ) from exc
     server.services.audit_repo.write(
         actor=actor.username, action="organization.smtp.test", target=organization_id
     )

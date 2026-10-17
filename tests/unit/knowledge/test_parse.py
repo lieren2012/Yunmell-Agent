@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from octop.infra.knowledge.parse import parse_document
+from octop.infra.knowledge.parse import KnowledgeDocumentParseError, parse_document
 
 _DOCX_NAMESPACES = (
     'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
@@ -199,6 +199,31 @@ def test_parse_csv_xlsx_and_xls(tmp_path: Path) -> None:
     assert parse_document(xlsx) == expected_xlsx
     assert parse_document(xlsm) == expected_xlsx
     assert parse_document(xls) == "# Q1\nitem\tqty\napple\t2"
+
+
+def test_parse_malformed_xlsx_and_pptx_reports_actionable_reason(tmp_path: Path) -> None:
+    xlsx = tmp_path / "broken.xlsx"
+    pptx = tmp_path / "broken.pptx"
+    xlsx.write_bytes(b"not an Office package")
+    pptx.write_bytes(b"not an Office package")
+
+    with pytest.raises(KnowledgeDocumentParseError, match="Excel 文件无法解析"):
+        parse_document(xlsx)
+    with pytest.raises(KnowledgeDocumentParseError, match="PowerPoint 文件无法解析"):
+        parse_document(pptx)
+
+
+def test_parse_empty_office_documents_expose_format_specific_message(tmp_path: Path) -> None:
+    from openpyxl import Workbook
+    from pptx import Presentation
+
+    xlsx = tmp_path / "empty.xlsx"
+    Workbook().save(xlsx)
+    pptx = tmp_path / "empty.pptx"
+    Presentation().save(pptx)
+
+    assert parse_document(xlsx) == ""
+    assert parse_document(pptx) == ""
 
 
 def test_parse_html_json_and_plain_variants(tmp_path: Path) -> None:

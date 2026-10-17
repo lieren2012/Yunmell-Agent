@@ -207,12 +207,12 @@ def _smtp_auth(server: Any, organization_id: str | None = None) -> Any:
 def _organization_id_for_email(server: Any, enterprise_slug: str | None = None) -> str | None:
     if enterprise_slug:
         organization = server.services.enterprise_repo.get_organization_by_slug(enterprise_slug)
-        return organization.organization_id if organization is not None else None
+        return str(organization.organization_id) if organization is not None else None
     try:
         from octop.infra.deployment.service import deployment
 
         organization, _ = deployment(server)
-        return organization.organization_id
+        return str(organization.organization_id)
     except Exception:
         return None
 
@@ -393,6 +393,7 @@ async def enterprise_register(
     if organization is None:
         raise OctopError(ErrorCode.NOT_FOUND, "enterprise not found")
     smtp_ready = _smtp_auth(server, organization.organization_id) is not None
+    email: str | None
     if smtp_ready:
         if not body.email or not body.email_code:
             raise OctopError(ErrorCode.AUTH_FAILED, "邮箱和验证码为必填项", status=400)

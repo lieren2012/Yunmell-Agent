@@ -18,8 +18,8 @@ from octop.infra.agents.providers.onnx_service import (
     OnnxServiceConfig,
     assert_catalog_model,
     delete_downloaded_model,
-    ensure_local_embedding_deps_async,
     is_model_downloaded,
+    local_embedding_deps_available,
     probe_local_model,
     save_config,
     status_payload,
@@ -129,25 +129,23 @@ async def put_config(
     except ValueError as exc:
         raise _http_from_value_error(exc) from exc
     config = OnnxServiceConfig(enabled=body.enabled, model=model)
-    deps_just_installed = False
-    if config.enabled:
-        try:
-            deps_just_installed = (
-                await ensure_local_embedding_deps_async(allow_install=True) == "installed"
-            )
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        # Without a download to fall back on, enabling a model that has no
-        # weights on disk would persist enabled=True and report ready=False
-        # forever — surface it instead of storing a service that cannot run.
-        if not body.download_if_missing and not is_model_downloaded(config.model):
-            raise HTTPException(
-                status_code=409,
-                detail="ONNX embedding model is not downloaded yet; download it before enabling",
-            )
+    # Without a download to fall back on, enabling a model that has no weights
+    # on disk would persist enabled=True and report ready=False forever —
+    # surface it instead of storing a service that cannot run.
+    if config.enabled and not body.download_if_missing and not is_model_downloaded(config.model):
+        raise HTTPException(
+            status_code=409,
+            detail="ONNX embedding model is not downloaded yet; download it before enabling",
+        )
     save_config(_settings_set(server), config)
     download_started = False
-    if config.enabled and body.download_if_missing and not is_model_downloaded(config.model):
+    prepare_required = config.enabled and (
+        not is_model_downloaded(config.model) or not local_embedding_deps_available()
+    )
+    # Dependencies are installed by the same background task even when the
+    # model weights are already cached; download_if_missing only controls the
+    # missing-weights case (which was rejected above when false).
+    if prepare_required:
         try:
             await DOWNLOAD_MANAGER.start_download(config.model)
             download_started = True
@@ -157,7 +155,7 @@ async def put_config(
             raise _http_from_value_error(exc) from exc
     payload = status_payload(_settings_get(server), DOWNLOAD_MANAGER.state)
     payload["download_started"] = download_started
-    payload["deps_just_installed"] = deps_just_installed
+    payload["deps_just_installed"] = False
     return payload
 
 

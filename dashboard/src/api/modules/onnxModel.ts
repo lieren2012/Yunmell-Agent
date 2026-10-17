@@ -18,7 +18,7 @@ export interface OnnxModelMeta {
 }
 
 export interface OnnxDownloadState {
-  status: "idle" | "downloading" | "loading" | "done" | "failed";
+  status: "idle" | "installing" | "downloading" | "loading" | "done" | "failed";
   progress: number;
   error?: string | null;
   model_name: string;

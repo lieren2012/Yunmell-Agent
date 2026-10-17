@@ -273,6 +273,20 @@ export const authApi = {
       }),
     }),
 
+  /** Send a password-reset code to an account mailbox. */
+  requestPasswordReset: (email: string) =>
+    request<{ ok: boolean; expires_in: number }>("/auth/password-reset/request", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+
+  /** Set a new password after a mailbox code has been verified. */
+  confirmPasswordReset: (email: string, code: string, newPassword: string) =>
+    request<void>("/auth/password-reset/confirm", {
+      method: "POST",
+      body: JSON.stringify({ email, code, new_password: newPassword }),
+    }),
+
   /** Update the current user's display name (PATCH /auth/me). */
   updateProfile: (displayName: string | null) =>
     request<OctopUser>("/auth/me", {

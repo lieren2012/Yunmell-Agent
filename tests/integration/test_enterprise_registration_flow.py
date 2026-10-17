@@ -20,6 +20,7 @@ async def _register(client, slug: str, username: str) -> str:
             "password": "TestPass12",
             "display_name": username,
             "email": f"{username}@example.com",
+            "email_code": "123456",
         },
     )
     assert response.status_code == 202, response.text

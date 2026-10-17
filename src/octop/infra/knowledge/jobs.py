@@ -12,7 +12,7 @@ from octop.infra.knowledge.gate import assert_knowledge_usable
 from octop.infra.knowledge.index import KnowledgeIndex
 from octop.infra.knowledge.ocr import optional_ocr_extractor
 from octop.infra.knowledge.params import get_advanced_settings
-from octop.infra.knowledge.parse import parse_document
+from octop.infra.knowledge.parse import empty_document_text_message, parse_document
 
 # Parsing/OCR also consumes memory; only one document should be in flight.
 INDEX_CONCURRENCY = 1
@@ -63,6 +63,8 @@ def process_document(services: Any, kb_id: str, doc_id: str) -> None:
         knobs = get_advanced_settings(services.settings_repo.get)
         chunks = chunk_text(text, size=knobs["chunk_size"], overlap=knobs["chunk_overlap"])
         if not (text or "").strip() or not chunks:
+            if path.suffix.lower() in {".xlsx", ".xlsm", ".pptx"}:
+                raise ValueError(empty_document_text_message(path))
             raise ValueError("knowledge document has no extractable text")
         try:
             embeddings = embed_knowledge_texts(services, chunks, base=base)
