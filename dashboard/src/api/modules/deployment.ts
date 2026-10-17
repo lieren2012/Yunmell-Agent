@@ -6,6 +6,7 @@ export interface DeploymentInfo {
   name: string;
   registration_open: boolean;
   review_required: boolean;
+  email_required?: boolean;
 }
 export interface ConnectionInfo { desktop: boolean; address: string; management_only?: boolean; }
 export interface RegistrationStatus {

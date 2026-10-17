@@ -92,8 +92,9 @@ class EnterpriseRegistrationBody(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=8, max_length=200)
     display_name: str | None = Field(default=None, max_length=128)
-    # Company email is the recovery channel, so it is part of the account.
-    email: str = Field(min_length=3, max_length=254)
+    # The recovery channel. Required whenever SMTP is enabled; deployments
+    # without a mail relay keep the admin-only review/reset flow.
+    email: str | None = Field(default=None, max_length=254)
     email_code: str | None = Field(default=None, max_length=12)
     supplement: str | None = Field(default=None, max_length=2000)
 
@@ -401,13 +402,15 @@ async def enterprise_register(
         raise OctopError(ErrorCode.NOT_FOUND, "enterprise not found")
     if not organization.registration_open:
         raise OctopError(ErrorCode.FORBIDDEN, "registration is closed", status=403)
-    normalized_email = normalize_email(body.email)
-    if normalized_email is None:
-        raise OctopError(ErrorCode.EMAIL_INVALID, "a valid email address is required", status=400)
     # Prove ownership of the recovery address before creating the account.
     # SMS/mail delivery may be disabled, so fall back to admin approval alone.
     smtp = load_smtp_config(server.services.settings_repo.get, server.services.secret_repo)
+    normalized_email = normalize_email(body.email) if body.email else None
     if smtp.enabled:
+        if normalized_email is None:
+            raise OctopError(
+                ErrorCode.EMAIL_INVALID, "a valid email address is required", status=400
+            )
         if not body.email_code:
             raise OctopError(
                 ErrorCode.AUTH_FAILED,

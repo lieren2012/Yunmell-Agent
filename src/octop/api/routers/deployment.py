@@ -181,14 +181,14 @@ async def register(
     username = body.username.strip()
     if not username:
         raise OctopError(ErrorCode.SLASH_BAD_ARGS, "请填写账号", status=400)
-    email = normalize_email(body.email)
-    if email is None:
-        raise OctopError(ErrorCode.EMAIL_INVALID, "请填写有效邮箱", status=400)
     # When the administrator configured SMTP, prove ownership of the recovery
     # address before the account exists.  Without SMTP the admin review is the
     # only gate, matching an on-prem deployment with no mail relay.
     smtp = load_smtp_config(server.services.settings_repo.get, server.services.secret_repo)
+    email = normalize_email(body.email) if body.email else None
     if smtp.enabled:
+        if email is None:
+            raise OctopError(ErrorCode.EMAIL_INVALID, "请填写有效邮箱", status=400)
         if not body.email_code:
             raise OctopError(
                 ErrorCode.AUTH_FAILED,

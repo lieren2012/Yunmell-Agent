@@ -37,10 +37,18 @@ TEXT = (24, 24, 27)
 SUBTEXT = (82, 82, 91)
 
 DEFAULT_OUT = Path("desktop/src/build/darwin/dmg-background.jpeg")
+FONT_DIR = Path(__file__).resolve().parents[1] / "desktop/src/build/darwin/fonts"
 
 
 def _find_chinese_font(bold: bool) -> Path:
-    """Pick an installed CJK-capable font, cross-platform."""
+    """Pick a CJK-capable font.
+
+    The repository ships Noto Sans SC so CI runners, which have no Chinese
+    system font, still reproduce the same image byte-for-byte.
+    """
+    bundled = FONT_DIR / ("NotoSansSC-Bold.otf" if bold else "NotoSansSC-Regular.otf")
+    if bundled.is_file():
+        return bundled
     candidates = [
         "C:/Windows/Fonts/msyhbd.ttc" if bold else "C:/Windows/Fonts/msyh.ttc",
         "/System/Library/Fonts/PingFang.ttc",

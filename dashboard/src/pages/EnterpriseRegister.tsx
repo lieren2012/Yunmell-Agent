@@ -67,10 +67,17 @@ export default function EnterpriseRegisterPage() {
           <Form.Item name="username" label="账号" rules={[{ required: true, whitespace: true, message: "请填写账号" }, { max: 64 }]}><Input autoComplete="username" /></Form.Item>
           <Form.Item name="password" label="密码" rules={[{ required: true, message: "请填写密码" }, { min: 8, max: 200, message: "密码长度为 8–200 位" }, { pattern: /^(?=.*[A-Za-z])(?=.*\d).+$/, message: "密码必须同时包含字母和数字" }]}><Input.Password autoComplete="new-password" /></Form.Item>
           <Form.Item name="display_name" label="姓名" rules={[{ max: 128 }]}><Input /></Form.Item>
-          <Form.Item name="email" label="企业邮箱" rules={[{ required: true, message: "请填写企业邮箱" }, { type: "email", message: "请填写有效邮箱" }, { max: 254 }]}><Input autoComplete="email" /></Form.Item>
+          <Form.Item name="email" label={info?.email_required ? "企业邮箱" : "企业邮箱（可选）"} rules={[{ required: Boolean(info?.email_required), message: "请填写企业邮箱" }, { type: "email", message: "请填写有效邮箱" }, { max: 254 }]}><Input autoComplete="email" /></Form.Item>
           <Form.Item label="邮箱验证码">
             <Space.Compact style={{ width: "100%" }}>
-              <Form.Item name="email_code" noStyle rules={[{ max: 12 }]}>
+              <Form.Item
+                name="email_code"
+                noStyle
+                rules={[
+                  { required: Boolean(info?.email_required), message: "请填写邮箱验证码" },
+                  { max: 12 },
+                ]}
+              >
                 <Input placeholder="6 位验证码" autoComplete="one-time-code" />
               </Form.Item>
               <Button onClick={() => void sendCode()} loading={sendingCode} disabled={codeCooldown > 0}>
