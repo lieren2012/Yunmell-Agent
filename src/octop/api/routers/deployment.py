@@ -154,6 +154,19 @@ async def register(
     username = body.username.strip()
     if not username:
         raise OctopError(ErrorCode.SLASH_BAD_ARGS, "请填写账号", status=400)
+    # SMTP-enabled deployments require a verified mailbox. Older installations
+    # without SMTP keep the legacy registration flow until an administrator
+    # enables the mail profile.
+    from octop.api.routers.auth import _smtp_auth, _verify_email_code
+
+    if _smtp_auth(server, organization.organization_id) is not None:
+        if not body.email or not body.email_code:
+            raise OctopError(ErrorCode.AUTH_FAILED, "邮箱和验证码为必填项", status=400)
+        email = _verify_email_code(server, body.email, body.email_code, "register")
+    elif body.email:
+        email = body.email.strip().lower()
+    else:
+        email = None
     from octop.infra.db.repos.user_roles import seeded_user_role_assignment
 
     assignment = seeded_user_role_assignment(server.services.db)
@@ -162,7 +175,7 @@ async def register(
         password=body.password,
         role=assignment[0] if assignment else "user",
         display_name=body.display_name,
-        email=body.email,
+        email=email,
         pending_approval=True,
     )
     if assignment:
