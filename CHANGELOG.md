@@ -6,13 +6,18 @@
 
 ## [Unreleased]
 
-### V1.1.3 开发中
+后续版本开发中。
+
+## [1.1.3] - 2026-10-17
+
+### 变更
 - 基于已发布的 V1.1.2 验收头创建独立开发分支，保留 V1.1.2 的 tag 和 Release 不变。
 - 官方基线升级到 TencentCloud/Octop `v1.0.2b9`（`4f443babdc1e3742e4ffdce4965c4ef32dc9f5e6`），只选择性同步与云迈企业管理、知识库分流和桌面端兼容的更新。
 - 同步官方本机搜索安全修复：限制 Python grep 回退的单文件/单行读取，并跳过 `/proc`、`/sys`、`/dev` 伪文件，避免无范围搜索耗尽主机内存。
 - 账号、智能体和会话删除现在会清理 checkpoint、长期记忆、个人工作区及残留线程数据；CLI、API 与运行中 Harness 共用同一清理路径。
 - 新增 v29 `skill_packages.allow_download` 迁移，并兼容官方 b9 的 v21 schema 冲突，避免升级时跳过 Yunmell 企业表。
 - 桌面客户端与 FnOS 包版本推进到 `1.1.3`，桌面安装资产统一使用 `Yunmell-Agent-desktop-*` 命名。
+- 普通用户找回密码界面改为邮箱验证码和企业管理员指引，不再显示 CLI、Windows 或 Docker 密码重置命令。
 - 继续回归权限与登录注册、个人/企业知识库、OCR/ONNX、默认专家恢复、桌面更新器和 Windows 构建链路。
 
 ## [1.1.2] - 2026-10-17
