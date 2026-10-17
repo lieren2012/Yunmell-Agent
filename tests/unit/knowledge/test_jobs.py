@@ -360,3 +360,67 @@ def test_resume_pending_index_jobs_resets_processing_and_enqueues(
 
     assert repo.get_document(doc.id).status == "pending"
     assert enqueued == [(kb.id, doc.id)]
+
+
+def test_retry_failed_index_jobs_requeues_only_failed_documents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A document that failed before a model was usable must heal on retry."""
+    pool = SqlitePool(tmp_path / "octop.db")
+    run_migrations(pool)
+    repo = KnowledgeRepo(pool)
+    owner_id = UserRepo(pool).create(username="owner", password_hash="h", role="user")
+    kb = repo.create_base(owner_user_id=owner_id, name="Docs")
+    failed = repo.create_document(
+        kb_id=kb.id, filename="broken.xlsx", content_type="text/plain", byte_size=5
+    )
+    ready = repo.create_document(
+        kb_id=kb.id, filename="ok.md", content_type="text/markdown", byte_size=5
+    )
+    repo.update_document(failed.id, status="failed", error_message="no embedding", chunk_count=0)
+    repo.update_document(ready.id, status="ready", chunk_count=2)
+    services = SimpleNamespace(knowledge_repo=repo)
+    enqueued: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        jobs,
+        "enqueue_index_document",
+        lambda _services, kb_id, doc_id: enqueued.append((kb_id, doc_id)),
+    )
+
+    count = jobs.retry_failed_index_jobs(services)
+
+    assert count == 1
+    refreshed = repo.get_document(failed.id)
+    assert refreshed.status == "pending"
+    assert refreshed.error_message == ""
+    assert repo.get_document(ready.id).status == "ready"
+    assert enqueued == [(kb.id, failed.id)]
+
+
+def test_retry_failed_respects_personal_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pool = SqlitePool(tmp_path / "octop.db")
+    run_migrations(pool)
+    repo = KnowledgeRepo(pool)
+    users = UserRepo(pool)
+    owner_id = users.create(username="owner", password_hash="h", role="user")
+    other_id = users.create(username="other", password_hash="h", role="user")
+    mine = repo.create_base(owner_user_id=owner_id, name="Mine")
+    theirs = repo.create_base(owner_user_id=other_id, name="Theirs")
+    shared = repo.create_base(owner_user_id=owner_id, name="Shared", shared=True)
+    docs = {}
+    for name, base in (("mine", mine), ("theirs", theirs), ("shared", shared)):
+        docs[name] = repo.create_document(
+            kb_id=base.id, filename=f"{name}.md", content_type="text/markdown", byte_size=5
+        )
+        repo.update_document(docs[name].id, status="failed", error_message="boom", chunk_count=0)
+    services = SimpleNamespace(knowledge_repo=repo)
+    monkeypatch.setattr(jobs, "enqueue_index_document", lambda *args: None)
+
+    count = jobs.retry_failed_index_jobs(services, personal_only=True, personal_owner_id=owner_id)
+
+    assert count == 1
+    assert repo.get_document(docs["mine"].id).status == "pending"
+    assert repo.get_document(docs["theirs"].id).status == "failed"
+    assert repo.get_document(docs["shared"].id).status == "failed"

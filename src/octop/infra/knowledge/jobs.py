@@ -149,3 +149,38 @@ def resume_pending_index_jobs(services: Any) -> None:
     documents = services.knowledge_repo.resume_pending_documents()
     for document in documents:
         enqueue_index_document(services, document.kb_id, document.id)
+
+
+def retry_failed_index_jobs(
+    services: Any,
+    *,
+    personal_only: bool = False,
+    personal_owner_id: int | None = None,
+) -> int:
+    """Re-enqueue documents whose last attempt failed.
+
+    A failed row is terminal: startup only revives ``processing`` rows, so a
+    document that failed while no usable embedding model was configured stayed
+    failed forever, even after the user downloaded and enabled a model.  Model
+    activation calls this so those documents heal without a manual rebuild.
+    """
+    repo = services.knowledge_repo
+    bases = repo.list_all()
+    if personal_only:
+        bases = [
+            base
+            for base in bases
+            if not base.shared
+            and (personal_owner_id is None or int(base.owner_user_id) == int(personal_owner_id))
+        ]
+    enqueued = 0
+    for base in bases:
+        for document in repo.list_documents(base.id):
+            if document.is_dir or document.status != "failed":
+                continue
+            repo.update_document(document.id, status="pending", error_message="", chunk_count=0)
+            refreshed = repo.get_document(document.id)
+            if refreshed is not None:
+                enqueue_index_document(services, refreshed.kb_id, refreshed.id)
+                enqueued += 1
+    return enqueued

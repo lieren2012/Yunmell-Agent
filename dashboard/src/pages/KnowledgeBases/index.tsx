@@ -3907,18 +3907,44 @@ export default function KnowledgeBasesPage() {
                 <div className={styles.formOptionRow}>
                   <div className={styles.formOptionCopy}>
                     <span className={styles.switchLabel}>
-                      {t("knowledgeBases.ocrTitle")}
+                      {canConfigureKb
+                        ? t("knowledgeBases.ocrTitle")
+                        : t("knowledgeBases.personalOcrTitle")}
                     </span>
                     <span className={styles.formOptionHint}>
-                      {t("knowledgeBases.ocrDescription")}
+                      {canConfigureKb
+                        ? t("knowledgeBases.ocrDescription")
+                        : personalReadiness.ocrStatus === "ready"
+                          ? t("knowledgeBases.personalOcrAlwaysOn")
+                          : t("knowledgeBases.personalOcrInstallHint")}
                     </span>
                   </div>
-                  <Switch
-                    size="small"
-                    checked={ocrEnabledDraft}
-                    onChange={setOcrEnabledDraft}
-                    disabled={!canConfigureKb}
-                  />
+                  {/* Enterprise OCR is an admin switch.  Personal OCR follows
+                      the local RapidOCR install, so showing a disabled switch
+                      made ordinary users think OCR was unavailable. */}
+                  {canConfigureKb ? (
+                    <Switch
+                      size="small"
+                      checked={ocrEnabledDraft}
+                      onChange={setOcrEnabledDraft}
+                    />
+                  ) : (
+                    <Tag
+                      color={
+                        personalReadiness.ocrStatus === "ready"
+                          ? "green"
+                          : personalReadiness.ocrStatus === "installing"
+                            ? "blue"
+                            : "default"
+                      }
+                    >
+                      {personalReadiness.ocrStatus === "ready"
+                        ? t("knowledgeBases.personalOcrEnabledTag")
+                        : personalReadiness.ocrStatus === "failed"
+                          ? t("knowledgeBases.personalOcrFailedTag")
+                          : t("knowledgeBases.personalOcrNotInstalledTag")}
+                    </Tag>
+                  )}
                 </div>
                 {ocrEnabledDraft ? (
                   <div className={styles.featureFields}>
